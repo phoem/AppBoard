@@ -1,5 +1,5 @@
 import os
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 import quickjs
 
 from PySide6.QtCore import QSettings, Qt
@@ -14,12 +14,21 @@ from .native import Drawing
 from .project import Project
 
 
+@dataclass(frozen=True)
+class PageRequest:
+    prompt: str
+    source: object
+    endpoint: str
+    model: str
+
+
 class Editor(QDialog):
-    def __init__(self, project, parent=None):
+    def __init__(self, project, parent=None, progressive=False):
         super().__init__(parent)
         self.setWindowTitle("AppBoard Studio")
         self.resize(820, 690)
         self.initial = self.result_project = project
+        self.progressive = progressive
         self.generator = Generator(self)
         self.settings = QSettings()
         self.endpoint = QLineEdit(os.getenv("APPBOARD_MODEL_URL") or
@@ -98,6 +107,12 @@ class Editor(QDialog):
         if not selected:
             self.failed("Select a model. Check the endpoint and refresh if the list is empty.")
             return
+        if self.progressive:
+            self.generator.base, self.generator.model = selected
+            self.remember_provider()
+            self.result_project = PageRequest(self.prompt.text().strip(), self.draft(), *selected)
+            self.accept()
+            return
         self.set_busy(True)
         self.generator.base, self.generator.model = selected
         self.status.setText("Generating app…")
@@ -107,10 +122,13 @@ class Editor(QDialog):
         self.generator.cancel()
         self.failed("Generation stopped.")
 
-    def generated(self, project):
+    def remember_provider(self):
         self.settings.setValue("generation/catalogEndpoint", self.endpoint.text().strip().rstrip("/"))
         self.settings.setValue("generation/endpoint", self.generator.base)
         self.settings.setValue("generation/model", self.generator.model)
+
+    def generated(self, project):
+        self.remember_provider()
         self.fill(project)
         self.set_busy(False)
         if project.version == 2:

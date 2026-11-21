@@ -45,13 +45,16 @@ Rectangle {
             anchors.leftMargin: 12; anchors.rightMargin: 5; spacing: 5
             Label {
                 Layout.fillWidth: true
-                text: panel.session.title + (panel.session.dirty ? "  •" : "")
+                text: (panel.session.pageStatus || panel.session.title) + (panel.session.dirty && panel.session.canSave ? "  •" : "")
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: "#edf3ee"; font.pixelSize: 13; font.bold: true
             }
-            BoardButton { text: "Edit"; onClicked: panel.session.edit() }
-            BoardButton { text: "Save"; onClicked: panel.session.save() }
+            BoardButton { text: "Back"; visible: panel.session.canBack && !panel.session.building; onClicked: panel.session.back() }
+            BoardButton { text: "Stop"; visible: panel.session.building; onClicked: panel.session.cancelPage() }
+            BoardButton { text: "Retry"; visible: panel.session.canRetry; onClicked: panel.session.retryPage() }
+            BoardButton { text: "Edit"; visible: !panel.session.building; onClicked: panel.session.edit() }
+            BoardButton { text: "Save"; visible: !panel.session.building && panel.session.canSave; onClicked: panel.session.save() }
             BoardButton { text: "Close"; onClicked: panel.session.close() }
         }
     }

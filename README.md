@@ -17,10 +17,11 @@ If you installed the original HTML runtime, rerun the pip install command above 
 ## Create, edit and reopen an app
 
 1. Select **New app** or press **Ctrl+N**. Enter a prompt such as “Draw a constellation editor. Let me click to add stars and connect consecutive stars with lines.”
-2. Pick a model from the **Model** dropdown and select **Generate and run**. AppBoard validates the completed drawing script and opens the running panel. Generation time depends on the model. An invalid draft stays in the editor with an error.
+2. Pick a model and select **Generate and run**. The panel opens immediately. Its heading, layout and controls appear as the model finishes drawing sections. The controls become interactive when the main page is complete.
+   Try “Build a sketchbook with a drawing page and a gallery.” Opening **Gallery** for the first time asks the model to draw that feature. **Back** returns to the previous page. Subsequent visits reuse the generated page.
 3. You can also write a drawing script and select **Run app**. Drag the panel by its title bar or resize it from the bottom-right corner.
-4. Select **Edit** to change the drawing code or request a revision. Applying a revision restarts the script. A separate browsing pane retains its page while its native toolbar is revised.
-5. Select **Save** to write a portable `.appboard` project. **Close** removes the running instance. **Open** or **Ctrl+O** restores the saved design and behavior. Opening the same file twice creates independent instances.
+4. Select **Edit** to change the visible page or request a streamed revision. **Stop** cancels a build and **Retry** repeats it. Applying a revision restarts that page's script.
+5. Select **Save** to write the main page and its completed features into one portable `.appboard` file. **Open** or **Ctrl+O** reopens it on the main page. Saved features are available offline. Unvisited features need the model on first use.
 
 The project contains app source and presentation settings. Variables in memory and browsing sessions last for the lifetime of the instance. Reopening a saved project works offline. Sites in a browser app still require their usual network access.
 
@@ -44,12 +45,13 @@ A generation request sends the prompt and current draft to the selected endpoint
 
 Run the suite in a Windows desktop session. It checks native rendered pixels, pointer and keyboard input, legacy HTML projects, the save/reopen flow, selection of identically named models on different servers, automatic launch, and page retention during toolbar edits. Loopback fixtures supply model responses and browser content.
 
-To include the optional live test, set `APPBOARD_LIVE_MODEL` to an installed model ID before running the same command. The test generates a native tally app, clicks its surface and checks the saved project.
+To include live inference tests, set `APPBOARD_LIVE_MODEL` to an installed model ID before running the same command. These checks generate a native tally app and a progressive sketchbook, click their controls, and verify that Gallery is generated on first use.
 
 ## Project documents
 
 - [Implementation plan and milestone acceptance tests](docs/PLAN.md)
 - [App project and browser API reference](docs/RUNTIME.md)
+- [ADR 0005 · Progressive pages and first-use generation](docs/adr/0005-progressive-pages.md)
 - [ADR 0004 · Native 2D app rendering](docs/adr/0004-native-drawing.md)
 - [ADR 0001 · Native workspace and generated documents](docs/adr/0001-native-workspace.md)
 - [ADR 0002 · Editable project files](docs/adr/0002-project-format.md)

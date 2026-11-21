@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from appboard.__main__ import desktop
 from appboard.editor import Editor
 from appboard.generation import Generator
-from appboard.project import DrawingProject, Project
+from appboard.project import DrawingProject, PagedProject, Project
 
 
 class Console(QObject):
@@ -173,6 +173,33 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(reopened.surface.nodes[0]["color"], "blue")
 
     @unittest.skipUnless(os.getenv("APPBOARD_LIVE_MODEL"), "set APPBOARD_LIVE_MODEL to run real inference")
+    def test_live_progressive_feature(self):
+        brief = ("Build a two-page pocket sketchbook. Main page title Sketchbook. Draw a visible Gallery "
+                 "control with g.featureButton(16,56,160,40,'Gallery','gallery',"
+                 "'Draw a gallery with a violet circle and a Gallery heading','teal'). "
+                 "Generate only the main page first.")
+        session = self.board.mount(PagedProject(brief=brief))
+        flow = session.pages
+        flow.client.model = os.environ["APPBOARD_LIVE_MODEL"]
+        previews = []
+        flow.client.preview.connect(lambda _: previews.append((session.building, len(session.surface.nodes))))
+        flow.start("", brief)
+        self.wait(lambda: not session.building, timeout=150)
+        self.assertFalse(session.canRetry, session.pageStatus)
+        self.assertTrue(any(busy and nodes for busy, nodes in previews))
+        self.assertEqual(session.project.features, {})
+        view = self.window.findChild(QObject, "nativeSurface")
+        labels = [n for n in session.surface.nodes if n.get("kind") == "text" and "gallery" in n["value"].lower()]
+        self.assertTrue(labels, session.project.script)
+        label = labels[-1]
+        QTest.mouseClick(self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                         view.mapToScene(QPointF(label["x"]+3, label["y"]+3)).toPoint())
+        self.wait(lambda: not session.building, timeout=150)
+        self.assertEqual(flow.key, "gallery", session.pageStatus)
+        self.assertFalse(session.surface.problem)
+        self.assertTrue(session.surface.nodes)
+
+    @unittest.skipUnless(os.getenv("APPBOARD_LIVE_MODEL"), "set APPBOARD_LIVE_MODEL to run real inference")
     def test_live_local_model(self):
         generated, errors = [], []
         generator = Generator(model=os.environ["APPBOARD_LIVE_MODEL"])
@@ -244,6 +271,7 @@ class DesktopTests(unittest.TestCase):
 
     def test_picker_routes_generation_and_runs_native_browser_immediately(self):
         calls = []
+        release_home = threading.Event()
         class Server(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
@@ -268,11 +296,27 @@ class DesktopTests(unittest.TestCase):
             def do_POST(self):
                 data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 calls.append((self.path, data))
-                script = ("function draw(g){g.clear('white');g.text(5,5,'Open');} "
-                          "function input(e,g){if(e.type==='down')g.browser.navigate('" + base + "/page');}")
-                result = DrawingProject("Browser", script, True)
-                self.send(json.dumps({"choices": [{"message":{"content": result.encode().decode()}}]}).encode(),
-                          "application/json")
+                home = json.loads(data["messages"][1]["content"])["page"] == "main"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                def delta(chunk):
+                    raw = json.dumps({"choices": [{"delta": {"content": chunk}}]}).encode()
+                    self.wfile.write(b"data: " + raw + b"\n\n")
+                    self.wfile.flush()
+                first = "g.clear('#176840');g.text(5,5,'Library');"
+                second = "g.text(5,30,'Open browser');"
+                handler = ("if(e.type==='down'){g.data.visits=(g.data.visits||0)+1; "
+                           "g.openFeature('browser','Browse reference websites');}")
+                if not home:
+                    first, second = "g.clear('white');", "g.text(5,5,'Open');"
+                    handler = "if(e.type==='down')g.browser.navigate('" + base + "/page');"
+                delta('{"name":"Library","browser":' + json.dumps(not home) +
+                      ',"toolbarHeight":80,"sections":[' + json.dumps(first))
+                if home:
+                    release_home.wait(8)
+                delta(',' + json.dumps(second) + '],"input":' + json.dumps(handler) + '}')
+                self.wfile.write(b"data: [DONE]\n\n")
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Server)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -310,14 +354,35 @@ class DesktopTests(unittest.TestCase):
             finally:
                 timer.stop()
         self.assertCountEqual(picker_items, [(a, "shared"), (b, "shared")])
+        session = self.board.sessions[0]
+        self.wait(lambda: any(n.get("value") == "Library" for n in session.surface.nodes))
+        live_view = self.window.findChild(QObject, "nativeSurface")
+        point = live_view.mapToScene(QPointF(200, 30)).toPoint()
+        def first_paint():
+            image = self.window.grabWindow()
+            scale = image.devicePixelRatio()
+            return image.pixelColor(round(point.x()*scale), round(point.y()*scale)).name() == "#176840"
+        self.wait(first_paint)
+        self.assertTrue(session.building)
+        self.assertFalse(session.canSave)
+        self.assertEqual(session.project.features, {})
+        release_home.set()
+        self.wait(lambda: not session.building)
         self.assertEqual(len(calls), 1)
         route, request = calls[0]
         self.assertEqual((route, request["model"]), ("/ollama/v1/chat/completions", "shared"))
-        self.assertEqual(json.loads(request["messages"][1]["content"])["currentProject"]["version"], 2)
+        self.assertTrue(request["stream"])
         self.assertEqual(len(self.board.sessions), 1)
         session = self.board.sessions[0]
         self.assertTrue(session.native)
         surface = self.window.findChild(QObject, "nativeSurface")
+        def click():
+            QTest.mouseClick(self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                             surface.mapToScene(QPointF(15,15)).toPoint())
+        click()
+        self.wait(lambda: session.pages.key == "browser")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(session.surface.data["visits"], 1)
         QTest.mouseClick(self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
                          surface.mapToScene(QPointF(15,15)).toPoint())
         self.wait(lambda: session.port.state.get("title") == "Native toolbar test")
@@ -325,6 +390,21 @@ class DesktopTests(unittest.TestCase):
         session.apply(DrawingProject("Restyled", "function draw(g){g.clear('red')}", True))
         self.assertIs(self.window.findChild(QObject, "browserView"), browser)
         self.assertEqual(session.port.state["title"], "Native toolbar test")
+        session.back()
+        click()
+        self.assertEqual(session.pages.key, "browser")
+        self.assertEqual(session.surface.data["visits"], 2)
+        path = Path(self.temp.name) / "library.appboard"
+        with patch("appboard.host.QFileDialog.getSaveFileName", return_value=(str(path), "")):
+            self.assertTrue(session.save())
+        session.close()
+        self.wait(lambda: not self.board.sessions and not self.window.findChildren(QObject, "appPanel"))
+        session = self.board.open_path(path)
+        surface = self.window.findChild(QObject, "nativeSurface")
+        click()
+        self.assertEqual(session.pages.key, "browser")
+        self.assertEqual(session.active_page.name, "Restyled")
+        self.assertEqual(len(calls), 2)
 
     def test_invalid_native_generation_stays_editable(self):
         editor = Editor(DrawingProject())
@@ -334,3 +414,31 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(editor.result(), 0)
         self.assertEqual(editor.draft(), invalid)
         self.assertIn("TypeError", editor.status.text())
+
+    def test_cancel_failed_feature_and_retry_preserve_committed_page(self):
+        path = Path(self.temp.name) / "existing.appboard"
+        original = DrawingProject("Home", "function draw(g){g.clear('green')}")
+        original.save(path)
+        session = self.board.open_path(path)
+        flow = session.pages
+        flow.client.model = "fixture"
+        with patch.object(flow.client, "generate_page") as generate:
+            flow.open("history", "Show the history")
+            flow.preview("function draw(g){g.clear('blue')}")
+            self.assertEqual(session.surface.nodes[0]["color"], "blue")
+            session.cancelPage()
+            flow.finish(DrawingProject("Late result"))
+            self.assertEqual(session.surface.nodes[0]["color"], "green")
+            self.assertFalse(session.dirty)
+            session.retryPage()
+            flow.client.failed.emit("Offline")
+            self.assertTrue(session.canRetry)
+            self.assertEqual(session.project, original)
+            session.retryPage()
+            flow.finish(DrawingProject("History", "function draw(g){g.clear('purple')}"))
+            self.assertEqual(generate.call_count, 3)
+        self.assertEqual(flow.key, "history")
+        self.assertEqual(session.project.version, 3)
+        self.assertEqual(Project.load(path).version, 2)
+        session.back()
+        self.assertEqual(session.surface.nodes[0]["color"], "green")

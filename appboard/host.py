@@ -1,14 +1,16 @@
 import hashlib
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, Signal, Slot
+from PySide6.QtCore import QObject, Property, QSettings, Signal, Slot
 from PySide6.QtQml import QQmlEngine
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QLineEdit, QMessageBox
 
-from .editor import Editor
+from .editor import Editor, PageRequest
+from .modelpicker import ModelPicker
 from .native import DrawingSurface
-from .project import DrawingProject, Project
+from .pages import Pages
+from .project import DrawingProject, PagedProject, Project
 from .runtime import document, navigation_url, profile
 
 
@@ -23,7 +25,7 @@ class BrowserPort(QObject):
 
     @Slot(str, str)
     def request(self, action, value):
-        if not self.session.project.browser:
+        if not self.session.hasBrowser:
             return
         if action == "state":
             self.stateChanged.emit(self.state)
@@ -49,7 +51,8 @@ class Session(QObject):
         self._web = None
         self.port = BrowserPort(self)
         self.port.command.connect(self.browserCommand)
-        self.surface = DrawingSurface(self.port) if project.version == 2 else None
+        self.surface = DrawingSurface(self.port) if project.version >= 2 else None
+        self.pages = Pages(self) if self.surface else None
         QQmlEngine.setObjectOwnership(self, QQmlEngine.ObjectOwnership.CppOwnership)
 
     @staticmethod
@@ -57,12 +60,21 @@ class Session(QObject):
         with Path(path).open("rb") as stream:
             return hashlib.file_digest(stream, "sha256").digest()
 
-    title = Property(str, lambda self: self.project.name, notify=changed)
+    @property
+    def active_page(self):
+        return self.pages.page if self.pages else self.project
+
+    title = Property(str, lambda self: self.active_page.name, notify=changed)
     dirty = Property(bool, lambda self: self.project != self.saved, notify=changed)
-    hasBrowser = Property(bool, lambda self: self.project.browser, notify=changed)
-    toolbarHeight = Property(int, lambda self: self.project.toolbarHeight, notify=changed)
+    hasBrowser = Property(bool, lambda self: self.active_page.browser, notify=changed)
+    toolbarHeight = Property(int, lambda self: self.active_page.toolbarHeight, notify=changed)
+    building = Property(bool, lambda self: bool(self.pages and self.pages.job), notify=changed)
+    canBack = Property(bool, lambda self: bool(self.pages and self.pages.history), notify=changed)
+    canRetry = Property(bool, lambda self: bool(self.pages and self.pages.retry_job), notify=changed)
+    pageStatus = Property(str, lambda self: self.pages.message if self.pages else "", notify=changed)
+    canSave = Property(bool, lambda self: not self.pages or self.pages.home_ready, notify=changed)
     source = Property(str, lambda self: self._html, notify=reloadSource)
-    native = Property(bool, lambda self: self.project.version == 2, constant=True)
+    native = Property(bool, lambda self: self.project.version >= 2, constant=True)
     drawing = Property(QObject, lambda self: self.surface, constant=True)
 
     @Property(QObject, constant=True)
@@ -85,10 +97,42 @@ class Session(QObject):
 
     @Slot()
     def edit(self):
-        if project := self.board.draft(self.project):
-            self.apply(project)
+        if self.building:
+            return
+        result = self.board.draft(self.active_page, progressive=bool(self.pages))
+        if isinstance(result, PageRequest):
+            self.pages.client.base, self.pages.client.model = result.endpoint, result.model
+            self.pages.start(self.pages.key, result.prompt, revision=True, draft=result.source)
+        elif result:
+            self.apply(result)
+
+    @Slot()
+    def back(self):
+        if self.pages:
+            self.pages.back()
+
+    @Slot()
+    def cancelPage(self):
+        if self.pages:
+            self.pages.cancel()
+
+    @Slot()
+    def retryPage(self):
+        if self.pages:
+            self.pages.retry()
 
     def apply(self, project):
+        if isinstance(self.project, PagedProject):
+            try:
+                self.pages.install(self.pages.key, project)
+            except ValueError as exc:
+                self.board.error(str(exc))
+                return
+            self.pages.home_ready = True
+            self.pages.message, self.pages.retry_job = "", None
+            self.changed.emit()
+            self.surface.load(project.script)
+            return
         if self.surface:
             self.project = project
             self.changed.emit()
@@ -104,6 +148,8 @@ class Session(QObject):
 
     @Slot(result=bool)
     def save(self):
+        if not self.canSave:
+            return False
         path = self.path
         if path is None:
             name, _ = QFileDialog.getSaveFileName(None, "Save app", "", "AppBoard projects (*.appboard)")
@@ -133,7 +179,7 @@ class Session(QObject):
                                     QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Yes
 
     def may_close(self):
-        if not self.dirty:
+        if not self.dirty or not self.canSave:
             return True
         choice = QMessageBox.question(None, "Save app?", f"Save changes to {self.title}?",
                                       QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
@@ -143,6 +189,8 @@ class Session(QObject):
     @Slot()
     def close(self):
         if self.may_close():
+            if self.pages:
+                self.pages.client.cancel()
             if self.surface:
                 self.surface.stop()
             self.board.sessions.remove(self)
@@ -160,9 +208,25 @@ class Board(QObject):
     def error(message):
         QMessageBox.warning(None, "AppBoard", message)
 
-    def draft(self, project):
-        dialog = Editor(project)
+    def draft(self, project, progressive=False):
+        dialog = Editor(project, progressive=progressive)
         return dialog.result_project if dialog.exec() else None
+
+    def choose_provider(self):
+        dialog = QDialog()
+        dialog.setWindowTitle("Choose a model for this page")
+        form = QFormLayout(dialog)
+        endpoint = QLineEdit(QSettings().value("generation/catalogEndpoint", "http://127.0.0.1:1234/v1"))
+        picker = ModelPicker(endpoint, None, dialog)
+        form.addRow("Configured server", endpoint)
+        form.addRow("Model", picker)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(lambda: dialog.accept() if picker.combo.currentData() else None)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        accepted = dialog.exec()
+        picker.cancel()
+        return picker.combo.currentData() if accepted else None
 
     def mount(self, project, path=None):
         session = Session(self, project, path)
@@ -174,8 +238,15 @@ class Board(QObject):
 
     @Slot()
     def create(self):
-        if project := self.draft(DrawingProject()):
-            self.mount(project)
+        draft = self.draft(DrawingProject(), progressive=True)
+        if isinstance(draft, PageRequest):
+            project = PagedProject(brief=draft.prompt)
+            session = self.mount(project)
+            session.pages.home_ready = False
+            session.pages.client.base, session.pages.client.model = draft.endpoint, draft.model
+            session.pages.start("", draft.prompt, draft=draft.source)
+        elif draft:
+            self.mount(PagedProject(draft.name, draft.script, draft.browser, draft.toolbarHeight))
 
     @Slot()
     def open(self):

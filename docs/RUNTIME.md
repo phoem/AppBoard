@@ -1,8 +1,29 @@
 # Authoring an AppBoard app
 
+## Progressive native projects · version 3
+
+New projects keep a native main-page script, a `brief` containing the original request, and a `features` object. Each feature key maps to a completed version 2 native page. The entire file uses the same 512 KiB budget. Model endpoints and credentials come from local settings.
+
+For generation, the server streams a page name, browser settings, ordered drawing sections and an input handler. Each complete section contributes the next part of the visible scene. A section contains the body of a drawing function and has its own lexical scope. The final source combines those sections into a normal, editable `draw` function. Input becomes active after validation. **Stop** restores the previous page and **Retry** repeats the pending request.
+
+Use `g.featureButton(x,y,w,h,label,id,description,color)` in a drawing section to draw a feature button with built-in pointer handling. Custom click or keyboard handlers can use `g.openFeature(id, description)`. Choose a stable lowercase ID starting with a letter, with up to 64 letters, digits, hyphens or underscores. The description tells the model what to build on first use. The host supplies a Back control. Each app supports up to 64 saved features.
+
+```javascript
+function draw(g, w, h) {
+  g.clear("#182536");
+  g.text(16, 12, "Sketchbook", 24, "white");
+  g.featureButton(16, 56, 140, 40, "Gallery", "gallery",
+                  "Draw a grid of sketches from g.data.sketches.", "#387654");
+}
+```
+
+`g.data` is a per-instance JSON object shared between pages, limited to 64 KiB. A feature request includes the brief, current and main page source, existing feature IDs and shared data key names. Runtime data values remain local. **Edit** changes the visible page. **Save** writes the main page and all completed features together. Reopening starts on the main page. Visiting a saved feature works offline, and a new feature uses the local model selection.
+
 ## Native drawing projects · version 2
 
-New apps store `version: 2`, `name`, and a JavaScript `script` in the same portable JSON file. The size limit is 512 KiB. Optional `browser` and `toolbarHeight` fields have the same defaults as version 1. Each running instance owns its own script state. The LLM uses this same interface for new designs and edits.
+Previously saved single-page native projects retain their format for manual edits. A successful streamed revision or a first generated feature upgrades the instance to version 3. The file on disk changes when you save.
+
+Single-page files store `version: 2`, `name`, and a JavaScript `script`. The size limit is 512 KiB. Optional `browser` and `toolbarHeight` fields have the same defaults as version 1. The following drawing operations also apply to every page in version 3.
 
 ```javascript
 let stars = [];
