@@ -1,7 +1,23 @@
 {
   "schema_version": 1,
   "updated_at": null,
-  "contracts": [],
+  "contracts": [
+    {
+      "contract_id": "appboard-project-v1",
+      "name": "Version 1 project files and browser capability",
+      "paths": ["appboard/project.py", "appboard/assets/guest.js", "docs/RUNTIME.md"],
+      "classification": "frozen-contract",
+      "status": "active",
+      "owner": "orchestrator",
+      "consumers": ["appboard/editor.py", "appboard/generation.py", "appboard/host.py", "saved .appboard files"],
+      "compatibility": "Continue opening valid version 1 files with the documented defaults and browser commands.",
+      "change_policy": "Review format, SDK, generator and stored project compatibility together.",
+      "verification": ["Run tests/test_project.py and tests/test_desktop.py using unittest discovery."],
+      "rationale": "Generated apps refer to these names and users reopen their source across sessions.",
+      "introduced_by": "docs/adr/0002-project-format.md",
+      "review_trigger": "A new project version or host capability."
+    }
+  ],
   "entry_template": {
     "contract_id": "contract-example",
     "name": "Example public boundary",

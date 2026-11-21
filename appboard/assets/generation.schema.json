@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "version": { "type": "integer", "enum": [1] },
+    "name": { "type": "string" },
+    "browser": { "type": "boolean" },
+    "toolbarHeight": { "type": "integer", "minimum": 32, "maximum": 400 },
+    "html": { "type": "string" }
+  },
+  "additionalProperties": false,
+  "required": ["version", "name", "browser", "toolbarHeight", "html"]
+}

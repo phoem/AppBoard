@@ -9,6 +9,12 @@
 5. Expose a narrow optional browsing capability with a real Chromium view and navigation events. Preserve the browsing instance across toolbar source edits.
 6. Verify package compatibility, model response handling, runtime isolation settings and end-to-end desktop behavior. Record the decisions in ADRs.
 
+### First-build verification
+
+Completed on Windows, 2026-11-21. The desktop tests exercise independent running apps, Canvas drawing, the model service contract, source editing, atomic save and reopen, and a real browser page that retains its form state during toolbar edits. An opt-in test also used LM Studio with the installed `google/gemma-4-e4b` model to generate a working tally button, click it in Chromium, and round-trip the generated project.
+
+A graphics smoke check reported Direct3D 11 for the Qt Quick window and ANGLE on Intel UHD Graphics for the guest WebGL 2 context. This records the adapter selected on the development machine. Dedicated-GPU selection and cross-device performance measurements remain open.
+
 ## Following milestones
 
 | Milestone | Acceptance test |

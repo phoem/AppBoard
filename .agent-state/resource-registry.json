@@ -14,6 +14,24 @@
   ],
   "resources": [
     {
+      "pattern": "appboard/project.py",
+      "classification": "frozen-contract",
+      "lock_type": "frozen",
+      "owner": "orchestrator",
+      "reason": "The versioned reader and writer are shared by user files and model responses.",
+      "source_of_truth": true,
+      "review_trigger": "The persisted format changes."
+    },
+    {
+      "pattern": "appboard/assets/guest.js",
+      "classification": "frozen-contract",
+      "lock_type": "frozen",
+      "owner": "orchestrator",
+      "reason": "Saved app source can call the public browser API.",
+      "source_of_truth": true,
+      "review_trigger": "The guest API changes."
+    },
+    {
       "pattern": "AGENTS.md",
       "classification": "orchestrator-only",
       "lock_type": "orchestrator-exclusive",
