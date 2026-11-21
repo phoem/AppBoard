@@ -7,7 +7,8 @@ from PySide6.QtQml import QQmlEngine
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from .editor import Editor
-from .project import Project
+from .native import DrawingSurface
+from .project import DrawingProject, Project
 from .runtime import document, navigation_url, profile
 
 
@@ -43,11 +44,12 @@ class Session(QObject):
         self.board, self.project, self.path = board, project, path
         self.saved = project if path else None
         self.fingerprint = self.digest(path) if path else None
-        self._html = document(project)
-        self._guest = profile(False, self)
-        self._web = profile(True, self)
+        self._html = document(project) if project.version == 1 else ""
+        self._guest = None
+        self._web = None
         self.port = BrowserPort(self)
         self.port.command.connect(self.browserCommand)
+        self.surface = DrawingSurface(self.port) if project.version == 2 else None
         QQmlEngine.setObjectOwnership(self, QQmlEngine.ObjectOwnership.CppOwnership)
 
     @staticmethod
@@ -60,8 +62,20 @@ class Session(QObject):
     hasBrowser = Property(bool, lambda self: self.project.browser, notify=changed)
     toolbarHeight = Property(int, lambda self: self.project.toolbarHeight, notify=changed)
     source = Property(str, lambda self: self._html, notify=reloadSource)
-    guestProfile = Property(QObject, lambda self: self._guest, constant=True)
-    webProfile = Property(QObject, lambda self: self._web, constant=True)
+    native = Property(bool, lambda self: self.project.version == 2, constant=True)
+    drawing = Property(QObject, lambda self: self.surface, constant=True)
+
+    @Property(QObject, constant=True)
+    def guestProfile(self):
+        if self._guest is None:
+            self._guest = profile(False, self)
+        return self._guest
+
+    @Property(QObject, constant=True)
+    def webProfile(self):
+        if self._web is None:
+            self._web = profile(True, self)
+        return self._web
     browserPort = Property(QObject, lambda self: self.port, constant=True)
 
     @Slot("QVariantMap")
@@ -75,6 +89,11 @@ class Session(QObject):
             self.apply(project)
 
     def apply(self, project):
+        if self.surface:
+            self.project = project
+            self.changed.emit()
+            self.surface.load(project.script)
+            return
         if project == self.project:
             self.reloadSource.emit()
             return
@@ -124,6 +143,8 @@ class Session(QObject):
     @Slot()
     def close(self):
         if self.may_close():
+            if self.surface:
+                self.surface.stop()
             self.board.sessions.remove(self)
             self.removed.emit()
 
@@ -147,11 +168,13 @@ class Board(QObject):
         session = Session(self, project, path)
         self.sessions.append(session)
         self.opened.emit(session)
+        if session.surface:
+            session.surface.load(project.script)
         return session
 
     @Slot()
     def create(self):
-        if project := self.draft(Project()):
+        if project := self.draft(DrawingProject()):
             self.mount(project)
 
     @Slot()

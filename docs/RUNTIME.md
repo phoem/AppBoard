@@ -1,6 +1,39 @@
 # Authoring an AppBoard app
 
-## Project version 1
+## Native drawing projects · version 2
+
+New apps store `version: 2`, `name`, and a JavaScript `script` in the same portable JSON file. The size limit is 512 KiB. Optional `browser` and `toolbarHeight` fields have the same defaults as version 1. Each running instance owns its own script state. The LLM uses this same interface for new designs and edits.
+
+```javascript
+let stars = [];
+function input(e) {
+  if (e.type === "down") stars.push([e.x, e.y]);
+}
+function draw(g, w, h) {
+  g.clear("#182536");
+  for (const [x, y] of stars.slice(-200)) g.circle(x, y, 3, "#ffdc87");
+  g.text(12, h - 32, stars.length + " stars", 16, "white");
+}
+```
+
+| Operation | Arguments and behavior |
+| --- | --- |
+| `g.clear(color)` | Discard earlier drawing operations and fill the panel. |
+| `g.rect(x,y,w,h,color,radius=0)` | Filled rectangle with optional rounded corners. |
+| `g.circle(cx,cy,radius,color)` | Filled circle around its center. |
+| `g.line(x1,y1,x2,y2,color,thickness=1)` | Stroked segment. |
+| `g.path(d,fill,stroke="transparent",thickness=1)` | Vector shape using SVG path-data syntax, including curves. |
+| `g.text(x,y,value,size=16,color="#151918")` | Plain text positioned by its top left, with size in logical pixels. |
+| `g.image(x,y,w,h,png)` | Draw an embedded PNG data URL, up to 2048 × 2048 and 400,000 URL characters. |
+| `g.animate()` | Request another draw after roughly 16 ms. Use elapsed time for motion. |
+
+Colors use Qt names, `transparent`, or hex such as `#RRGGBB`. Every draw produces the full scene in paint order. Width and height track the surface size. `input(e,g,w,h)` receives pointer `down`, `up` and `move` events with coordinates and a buttons bitmask, `wheel` with coordinates and delta, and `key` with text, Qt key code and modifiers. Click a surface to give it keyboard focus. Draw custom controls and handle their hit regions in the script.
+
+In browser mode, the drawing surface occupies the toolbar area. `g.browser` provides URL, title, loading and history flags, and `navigate(url)`, `back()`, `forward()` and `reload()` commands. Handle commands in input callbacks or guard one-time actions. A page state change requests a redraw.
+
+Each script context has a 16 MiB memory limit, a 256 KiB stack limit and a 50 ms execution budget per call. Frames support up to 512 drawing operations. Scripts receive drawing, input and browser data. The host retains control of files, network credentials and Qt objects. A runtime error stops that script and appears in its panel.
+
+## Legacy HTML projects · version 1
 
 A `.appboard` file is a UTF-8 JSON object, limited to 512 KiB including its serialized source. The host validates every project before running or saving it.
 

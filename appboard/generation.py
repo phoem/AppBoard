@@ -10,6 +10,26 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequ
 from .project import MAX_BYTES, Project
 
 SCHEMA = json.loads((Path(__file__).with_name("assets") / "generation.schema.json").read_text(encoding="utf-8"))
+DRAWING_SCHEMA = {**SCHEMA, "properties": {
+    **{k: v for k, v in SCHEMA["properties"].items() if k != "html"},
+    "version": {"type": "integer", "enum": [2]}, "script": {"type": "string"}
+}, "required": ["version", "name", "browser", "toolbarHeight", "script"]}
+
+DRAWING_INSTRUCTIONS = """Create a working native 2D AppBoard app. Return version 2, name, script, browser, toolbarHeight.
+script is plain JavaScript. Implement function draw(g,w,h) and optionally function input(e,g,w,h).
+App-level variables persist until close or source reload. Render the full scene on each draw.
+Coordinates are logical pixels from top left. Draw in order:
+g.clear(color); g.rect(x,y,width,height,color,radius=0); g.circle(centerX,centerY,radius,color);
+g.line(x1,y1,x2,y2,color,thickness=1); g.text(x,y,value,size=16,color="#151918");
+g.path(svgPathData,fillColor,strokeColor="transparent",thickness=1); g.image(x,y,w,h,pngDataURL).
+Use Qt named colors, transparent or #RRGGBB. Up to 512 calls per frame.
+For motion call g.animate() in draw and use Date.now() for elapsed time.
+input receives e.type "down", "up", "move", "wheel" or "key"; pointer has x,y,buttons; wheel has delta;
+key has text and Qt integer key. Implement hit testing and control behavior yourself in input.
+Draw custom controls with the same primitives. No HTML, DOM, canvas, imports, OS, async, network or timers.
+For a browser, set browser true and draw the toolbar for the separate live web page.
+From input use g.browser.navigate(url), back(), forward(), reload(). Read g.browser.url and title.
+For other apps use browser false and toolbarHeight 80. Preserve unrelated behavior when revising."""
 
 INSTRUCTIONS = """Create or revise a runnable AppBoard project from the user's request.
 Return only a JSON object with version:1, name (1-100 characters), html (one self-contained HTML document with inline CSS and JavaScript), browser (boolean), toolbarHeight (integer from 32 to 400).
@@ -51,19 +71,37 @@ class Generator(QObject):
             reply, self.reply = self.reply, None
             reply.abort()
 
+    def list_models(self):
+        self.cancel()
+        self._request("models", None, lambda raw: self.choices.emit(self.model_names(raw)), timeout=6000)
+
+    @staticmethod
+    def model_names(raw):
+        models = json.loads(raw).get("data")
+        if not isinstance(models, list):
+            raise ValueError("The server returned an invalid model list.")
+        return sorted({m["id"] for m in models if isinstance(m, dict) and
+                       isinstance(m.get("id"), str) and m["id"].strip()}, key=str.casefold)
+
     def generate(self, prompt, project):
         self.cancel()
-        messages = [{"role": "system", "content": INSTRUCTIONS},
+        native = project.version == 2
+        messages = [{"role": "system", "content": DRAWING_INSTRUCTIONS if native else INSTRUCTIONS},
                     {"role": "user", "content": json.dumps({"request": prompt, "currentProject": asdict(project)})}]
+        def received(raw):
+            result = parse_response(raw)
+            if result.version != project.version:
+                raise ValueError("The model returned the wrong app format. Try generating again.")
+            self.generated.emit(result)
+
         def submit(model):
             self._request("chat/completions", {"model": model, "messages": messages, "stream": False,
                                                "response_format": {"type": "json_schema", "json_schema": {
-                                                   "name": "appboard_project", "strict": True, "schema": SCHEMA}}},
-                          lambda raw: self.generated.emit(parse_response(raw)))
+                                                   "name": "appboard_project", "strict": True,
+                                                   "schema": DRAWING_SCHEMA if native else SCHEMA}}}, received)
 
         def select(raw):
-            models = json.loads(raw).get("data")
-            names = [m["id"] for m in models or [] if isinstance(m, dict) and isinstance(m.get("id"), str)]
+            names = self.model_names(raw)
             if not names:
                 raise ValueError("Load a chat model in your server or set APPBOARD_MODEL.")
             if len(names) == 1:
@@ -76,14 +114,14 @@ class Generator(QObject):
         else:
             self._request("models", None, select)
 
-    def _request(self, route, body, consume):
+    def _request(self, route, body, consume, timeout=120_000):
         url = QUrl(self.base + "/" + route)
         if not url.host() or url.userInfo() or (url.scheme() != "https" and
                 (url.scheme() != "http" or url.host() not in {"localhost", "127.0.0.1", "::1"})):
             self.failed.emit("Use a local HTTP or remote HTTPS model endpoint in APPBOARD_MODEL_URL.")
             return
         request = QNetworkRequest(url)
-        request.setTransferTimeout(120_000)
+        request.setTransferTimeout(timeout)
         request.setAttribute(QNetworkRequest.Attribute.RedirectPolicyAttribute,
                              QNetworkRequest.RedirectPolicy.ManualRedirectPolicy)
         request.setRawHeader(b"Content-Type", b"application/json")

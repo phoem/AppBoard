@@ -17,6 +17,10 @@ A graphics smoke check reported Direct3D 11 for the Qt Quick window and ANGLE on
 
 ## Following milestones
 
+### Native 2D authoring and model discovery · implemented
+
+New projects use version 2 drawing scripts. The runtime maps their primitives to native Qt Quick items. Version 1 documents keep their reader and renderer. Studio discovers provider-qualified model IDs and runs a valid generated native app as soon as the model completes its response. Coverage includes native pixels and input, save/reopen, resource limits, browser toolbar revisions, multi-provider routing and a live LM Studio generation test. See [ADR 0004](adr/0004-native-drawing.md).
+
 | Milestone | Acceptance test |
 | --- | --- |
 | Configurable layout and multiple browser surfaces | Generate vertical tabs or a split browser. Move the toolbar while retaining page history and entered form data. |

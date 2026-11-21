@@ -1,13 +1,16 @@
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
+import quickjs
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFontDatabase
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
                                QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
                                QSpinBox, QVBoxLayout)
 
 from .generation import Generator
+from .modelpicker import ModelPicker
+from .native import Drawing
 from .project import Project
 
 
@@ -20,16 +23,15 @@ class Editor(QDialog):
         self.generator = Generator(self)
         self.settings = QSettings()
         self.endpoint = QLineEdit(os.getenv("APPBOARD_MODEL_URL") or
-                                  self.settings.value("generation/endpoint", self.generator.base))
-        self.model = QComboBox()
-        self.model.setEditable(True)
-        self.model.lineEdit().setPlaceholderText("Discover models or enter a model ID")
-        self.model.setEditText(os.getenv("APPBOARD_MODEL") or self.settings.value("generation/model", ""))
-        self.generator.choices.connect(self.choose_model)
+                                  self.settings.value("generation/catalogEndpoint",
+                                                      self.settings.value("generation/endpoint", self.generator.base)))
+        preferred = (os.getenv("APPBOARD_MODEL_URL") or self.settings.value("generation/endpoint", self.endpoint.text()),
+                     os.getenv("APPBOARD_MODEL") or self.settings.value("generation/model", ""))
+        self.picker = ModelPicker(self.endpoint, preferred, self)
         self.generator.generated.connect(self.generated)
         self.generator.failed.connect(self.failed)
         self.prompt = QLineEdit(placeholderText="Describe a new app or a change to this draft")
-        self.generate = QPushButton("Generate")
+        self.generate = QPushButton("Generate and run" if project.version == 2 else "Generate")
         self.generate.clicked.connect(self.start)
         self.prompt.returnPressed.connect(self.start)
         self.cancel_request = QPushButton("Stop")
@@ -56,15 +58,15 @@ class Editor(QDialog):
         for w in (self.prompt, self.generate, self.cancel_request):
             row.addWidget(w)
         form = QFormLayout()
-        form.addRow("Model endpoint", self.endpoint)
-        form.addRow("Model", self.model)
+        form.addRow("Configured server", self.endpoint)
+        form.addRow("Model", self.picker)
         form.addRow("Name", self.name)
         form.addRow("Browser", self.browser)
         form.addRow("Toolbar height", self.height)
         layout = QVBoxLayout(self)
         layout.addLayout(row)
         layout.addLayout(form)
-        layout.addWidget(QLabel("Source · HTML / CSS / JavaScript"))
+        layout.addWidget(QLabel("Native 2D drawing script" if project.version == 2 else "Source · HTML / CSS / JavaScript"))
         layout.addWidget(self.source, 1)
         layout.addWidget(self.status)
         layout.addWidget(buttons)
@@ -74,17 +76,17 @@ class Editor(QDialog):
 
     def fill(self, project):
         self.name.setText(project.name)
-        self.source.setPlainText(project.html)
+        self.source.setPlainText(getattr(project, project.source_field))
         self.browser.setChecked(project.browser)
         self.height.setValue(project.toolbarHeight)
 
     def draft(self):
-        return Project(name=self.name.text(), html=self.source.toPlainText(),
-                       browser=self.browser.isChecked(), toolbarHeight=self.height.value())
+        return replace(self.initial, name=self.name.text(), browser=self.browser.isChecked(),
+                       toolbarHeight=self.height.value(), **{self.initial.source_field: self.source.toPlainText()})
 
     def set_busy(self, busy):
         for widget in (self.generate, self.name, self.source, self.browser, self.prompt, self.run,
-                       self.endpoint, self.model):
+                       self.endpoint, self.picker):
             widget.setEnabled(not busy)
         self.height.setEnabled(not busy and self.browser.isChecked())
         self.cancel_request.setVisible(busy)
@@ -92,10 +94,13 @@ class Editor(QDialog):
     def start(self):
         if not self.prompt.text().strip() or not self.generate.isEnabled():
             return
+        selected = self.picker.combo.currentData()
+        if not selected:
+            self.failed("Select a model. Check the endpoint and refresh if the list is empty.")
+            return
         self.set_busy(True)
-        self.generator.base = self.endpoint.text().strip().rstrip("/")
-        self.generator.model = self.model.currentText().strip()
-        self.status.setText("Generating a draft…")
+        self.generator.base, self.generator.model = selected
+        self.status.setText("Generating app…")
         self.generator.generate(self.prompt.text().strip(), self.draft())
 
     def stop(self):
@@ -103,19 +108,15 @@ class Editor(QDialog):
         self.failed("Generation stopped.")
 
     def generated(self, project):
+        self.settings.setValue("generation/catalogEndpoint", self.endpoint.text().strip().rstrip("/"))
         self.settings.setValue("generation/endpoint", self.generator.base)
         self.settings.setValue("generation/model", self.generator.model)
         self.fill(project)
         self.set_busy(False)
-        self.status.setText("Draft ready. Review the source or run the app.")
-
-    def choose_model(self, names):
-        self.model.clear()
-        self.model.addItems(names)
-        self.model.setCurrentIndex(-1)
-        self.set_busy(False)
-        self.status.setText("Choose a chat model, then select Generate.")
-        self.model.showPopup()
+        if project.version == 2:
+            self.apply()
+        else:
+            self.status.setText("Draft ready. Review the source or run the app.")
 
     def failed(self, message):
         self.set_busy(False)
@@ -124,10 +125,17 @@ class Editor(QDialog):
     def apply(self):
         try:
             self.result_project = Project.parse(asdict(self.draft()))
-        except ValueError as exc:
+            if self.result_project.version == 2:
+                Drawing(self.result_project.script).frame(640, self.height.value() if self.browser.isChecked() else 400)
+        except (ValueError, quickjs.JSException, OverflowError, RecursionError) as exc:
             self.failed(str(exc))
             return
         self.accept()
+
+    def done(self, result):
+        self.picker.cancel()
+        self.generator.cancel()
+        super().done(result)
 
     def reject(self):
         if self.initial != self.draft() and QMessageBox.question(

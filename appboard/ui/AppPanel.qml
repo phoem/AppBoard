@@ -75,11 +75,21 @@ Rectangle {
         width: parent.width - 2
         height: parent.height - y - 10
         clip: true
-        WebEngineView {
-            id: guest
-            objectName: "guestView"
+        Loader {
+            id: appSurface
             width: parent.width
             height: panel.session.hasBrowser ? Math.min(panel.session.toolbarHeight, parent.height - 16) : parent.height
+            sourceComponent: panel.session.native ? drawingView : documentView
+        }
+        Component {
+            id: drawingView
+            NativeSurface { drawing: panel.session.drawing }
+        }
+        Component {
+          id: documentView
+          WebEngineView {
+            id: guest
+            objectName: "guestView"
             profile: panel.session.guestProfile
             webChannel: bridge
             settings.localContentCanAccessFileUrls: false
@@ -96,11 +106,16 @@ Rectangle {
             }
             onRenderProcessTerminated: panel.runtimeError = "The app renderer stopped. Use Edit to revise or reload its source."
             Component.onCompleted: loadHtml(panel.session.source)
+            Connections {
+                target: panel.session
+                function onReloadSource() { panel.runtimeError = ""; guest.loadHtml(panel.session.source) }
+            }
+          }
         }
         Loader {
             id: browserLoader
             active: panel.session.hasBrowser
-            x: 0; y: guest.height
+            x: 0; y: appSurface.height
             width: parent.width; height: parent.height - y
             sourceComponent: Component {
                 WebEngineView {
@@ -138,14 +153,15 @@ Rectangle {
             }
         }
         Rectangle {
-            visible: panel.runtimeError !== ""
+            visible: errorText.text !== ""
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
             height: errorText.implicitHeight + 12
             color: "#532e2b"
             Label {
                 id: errorText
                 anchors.centerIn: parent; width: parent.width - 14; wrapMode: Text.Wrap
-                color: "#ffe7dd"; textFormat: Text.PlainText; text: panel.runtimeError
+                color: "#ffe7dd"; textFormat: Text.PlainText
+                text: panel.session.native ? panel.session.drawing.problem : panel.runtimeError
             }
         }
     }
@@ -169,7 +185,6 @@ Rectangle {
     }
     Connections {
         target: panel.session
-        function onReloadSource() { panel.runtimeError = ""; guest.loadHtml(panel.session.source) }
         function onRemoved() {
             const s = panel.session
             panel.destroy()
