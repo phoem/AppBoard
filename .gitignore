@@ -1,0 +1,7 @@
+# Multi-agent runtime state is local and ephemeral. Durable coordination
+# knowledge in .agent-state/ remains tracked.
+.agent-state/runtime/
+
+.venv/
+__pycache__/
+*.py[cod]

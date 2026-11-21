@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "updated_at": null,
+  "default_classification": "unclassified",
+  "precedence": "most-specific-match-wins; stricter nested instructions still apply",
+  "classifications": [
+    "worker-exclusive",
+    "serialized-shared",
+    "orchestrator-only",
+    "frozen-contract",
+    "read-only",
+    "generated",
+    "unclassified"
+  ],
+  "resources": [
+    {
+      "pattern": "AGENTS.md",
+      "classification": "orchestrator-only",
+      "lock_type": "orchestrator-exclusive",
+      "owner": "orchestrator",
+      "reason": "Repository-wide coordination policy must remain internally consistent.",
+      "source_of_truth": true,
+      "review_trigger": "When orchestration behavior or repository structure changes."
+    },
+    {
+      "pattern": ".agent-state/README.md",
+      "classification": "orchestrator-only",
+      "lock_type": "orchestrator-exclusive",
+      "owner": "orchestrator",
+      "reason": "Defines the durable/runtime boundary and state formats.",
+      "source_of_truth": true,
+      "review_trigger": "When a state schema or file convention changes."
+    },
+    {
+      "pattern": ".agent-state/resource-registry.json",
+      "classification": "orchestrator-only",
+      "lock_type": "orchestrator-exclusive",
+      "owner": "orchestrator",
+      "reason": "The orchestrator is the authority for resource classification and ownership policy.",
+      "source_of_truth": true,
+      "review_trigger": "When resources are added, ownership changes, or contention is discovered."
+    },
+    {
+      "pattern": ".agent-state/contracts.json",
+      "classification": "orchestrator-only",
+      "lock_type": "orchestrator-exclusive",
+      "owner": "orchestrator",
+      "reason": "Contract policy changes require dependency-aware review.",
+      "source_of_truth": true,
+      "review_trigger": "When a contract is added, changed, deprecated, or removed."
+    },
+    {
+      "pattern": ".agent-state/repository-decisions.md",
+      "classification": "orchestrator-only",
+      "lock_type": "orchestrator-exclusive",
+      "owner": "orchestrator",
+      "reason": "The orchestrator promotes and reconciles durable coordination knowledge.",
+      "source_of_truth": true,
+      "review_trigger": "At integration or run close when stable knowledge was discovered."
+    },
+    {
+      "pattern": ".agent-state/runtime/locks.json",
+      "classification": "orchestrator-only",
+      "lock_type": "orchestrator-exclusive",
+      "owner": "orchestrator",
+      "reason": "Only the orchestrator grants, changes, releases, or revokes locks.",
+      "source_of_truth": false,
+      "review_trigger": "At the start and end of each orchestration run."
+    },
+    {
+      "pattern": ".agent-state/runtime/orchestrator.log",
+      "classification": "orchestrator-only",
+      "lock_type": "orchestrator-exclusive",
+      "owner": "orchestrator",
+      "reason": "This log records orchestrator scheduling, integration, and recovery activity.",
+      "source_of_truth": false,
+      "review_trigger": "At the end of each orchestration run."
+    },
+    {
+      "pattern": ".agent-state/runtime/integration-queue.jsonl",
+      "classification": "serialized-shared",
+      "lock_type": "serialized",
+      "owner": "orchestrator",
+      "reason": "Workers may append complete requests, while the orchestrator controls processing and resolution order.",
+      "source_of_truth": false,
+      "review_trigger": "When queue contention or malformed writes occur."
+    },
+    {
+      "pattern": ".agent-state/runtime/workers/<assigned-worker-id>/**",
+      "classification": "worker-exclusive",
+      "lock_type": "exclusive",
+      "owner": "assigned-worker",
+      "reason": "Each worker maintains provenance and checkpoints only inside its assigned runtime directory; the orchestrator retains recovery authority.",
+      "source_of_truth": false,
+      "review_trigger": "When the worker reaches a terminal state or recovery begins."
+    }
+  ]
+}

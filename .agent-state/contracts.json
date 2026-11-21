@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "updated_at": null,
+  "contracts": [],
+  "entry_template": {
+    "contract_id": "contract-example",
+    "name": "Example public boundary",
+    "paths": [
+      "path/to/interface"
+    ],
+    "classification": "frozen-contract",
+    "status": "active",
+    "owner": "orchestrator",
+    "consumers": [
+      "path/to/consumer"
+    ],
+    "compatibility": "Describe the behavior, schema, or API promise that must remain stable.",
+    "change_policy": "Explicit orchestrator approval, consumer impact review, migration plan, and verification are required.",
+    "verification": [
+      "Describe contract-focused checks."
+    ],
+    "rationale": "Explain why this boundary is frozen.",
+    "introduced_by": "decision-YYYYMMDD-short-name",
+    "last_reviewed_at": null,
+    "review_trigger": "Describe when this entry must be revisited."
+  }
+}
