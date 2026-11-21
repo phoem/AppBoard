@@ -9,6 +9,7 @@ from pathlib import Path
 import quickjs
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 from PySide6.QtGui import QColor
+from .project import FEATURE_ID
 
 SDK = (Path(__file__).with_name("assets") / "drawing.js").read_text(encoding="utf-8")
 FIELDS = {
@@ -70,6 +71,13 @@ def checked_frame(raw):
         if (not isinstance(cmd, list) or len(cmd) != 2 or cmd[0] not in ("navigate", "back", "forward", "reload")
                 or not isinstance(cmd[1], str) or len(cmd[1]) > 8192):
             raise ValueError("Invalid browser command.")
+    feature = frame.get("feature")
+    if feature is not None and (not isinstance(feature, list) or len(feature) != 2 or
+            not isinstance(feature[0], str) or not FEATURE_ID.fullmatch(feature[0]) or
+            not isinstance(feature[1], str) or not 0 < len(feature[1].strip()) <= 2048):
+        raise ValueError("openFeature needs a stable lowercase ID and a short feature description.")
+    if not isinstance(frame.get("data", {}), dict) or len(json.dumps(frame.get("data", {}))) > 65536:
+        raise ValueError("Shared app data must be an object up to 64 KiB.")
     return frame
 
 
@@ -82,14 +90,15 @@ class Drawing:
         self.render = self.vm.eval(SDK)
         self.vm.eval(script)
 
-    def frame(self, width, height, event=None, browser=None):
-        raw = self.render(width, height, json.dumps(event) if event else "", json.dumps(browser or {}))
+    def frame(self, width, height, event=None, browser=None, data=None):
+        raw = self.render(width, height, json.dumps(event) if event else "", json.dumps(browser or {}), json.dumps(data or {}))
         return checked_frame(raw)
 
 
 class DrawingSurface(QObject):
     frameChanged = Signal()
     errorChanged = Signal()
+    featureRequested = Signal(str, str)
 
     def __init__(self, port):
         super().__init__(port)
@@ -98,6 +107,7 @@ class DrawingSurface(QObject):
         self.size = (640, 400)
         self.nodes = []
         self.error = ""
+        self.data = {}
         self.timer = QTimer(self, singleShot=True)
         self.timer.timeout.connect(self.redraw)
         self.port.stateChanged.connect(self.schedule)
@@ -143,10 +153,11 @@ class DrawingSurface(QObject):
         if not self.drawing:
             return
         try:
-            frame = self.drawing.frame(*self.size, event, self.port.state)
+            frame = self.drawing.frame(*self.size, event, self.port.state, self.data)
         except (ValueError, quickjs.JSException, OverflowError, RecursionError) as exc:
             self.fail(exc)
             return
+        self.data = frame["data"]
         if self.nodes != frame["nodes"]:
             self.nodes = frame["nodes"]
             self.frameChanged.emit()
@@ -154,3 +165,5 @@ class DrawingSurface(QObject):
             self.port.request(action, value)
         if frame["animate"]:
             self.timer.start(16)
+        if frame["feature"] and event and event.get("type") in ("down", "up", "key"):
+            self.featureRequested.emit(*frame["feature"])

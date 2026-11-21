@@ -67,7 +67,10 @@ Item {
     MouseArea {
         anchors.fill: parent
         hoverEnabled: true
-        function send(kind, e) { surface.drawing.interact({type:kind, x:e.x, y:e.y, buttons:e.buttons}) }
+        function send(kind, e) {
+            const button = e.button === Qt.LeftButton ? 0 : e.button === Qt.MiddleButton ? 1 : e.button === Qt.RightButton ? 2 : -1
+            surface.drawing.interact({type:kind, x:e.x, y:e.y, button:button, buttons:e.buttons})
+        }
         onPressed: e => { surface.forceActiveFocus(); send("down", e) }
         onReleased: e => send("up", e)
         onPositionChanged: e => send("move", e)

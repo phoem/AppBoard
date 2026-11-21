@@ -1,11 +1,13 @@
 """The portable, versioned app project. Runtime state lives outside this file."""
 import json
 import os
+import re
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 MAX_BYTES = 512 * 1024
+FEATURE_ID = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 STARTER = """<!doctype html>
 <meta charset="utf-8">
 <style>
@@ -22,9 +24,10 @@ STARTER = """<!doctype html>
 class ProjectFile:
     @classmethod
     def parse(cls, data):
-        if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] not in (1, 2):
-            raise ValueError("AppBoard supports project versions 1 and 2.")
-        project_type = DrawingProject if data["version"] == 2 else Project
+        types = {1: Project, 2: DrawingProject, 3: PagedProject}
+        if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] not in types:
+            raise ValueError("Unsupported AppBoard project version.")
+        project_type = types[data["version"]]
         if data.keys() - project_type.__dataclass_fields__.keys():
             raise ValueError("The project contains unknown fields.")
         name = data.get("name")
@@ -38,6 +41,14 @@ class ProjectFile:
         height = data.get("toolbarHeight", 80)
         if type(height) is not int or not 32 <= height <= 400:
             raise ValueError("Toolbar height must be between 32 and 400.")
+        if project_type is PagedProject:
+            brief, features = data.get("brief", ""), data.get("features", {})
+            if not isinstance(brief, str) or not isinstance(features, dict) or len(features) > 64:
+                raise ValueError("Invalid page brief or feature collection (maximum 64 features).")
+            for key, page in features.items():
+                if (not FEATURE_ID.fullmatch(key) or not isinstance(page, dict) or page.get("version") != 2):
+                    raise ValueError("Invalid saved feature page.")
+                cls.parse(page)
         project = project_type(**data)
         if len(project.encode()) > MAX_BYTES:
             raise ValueError("The project exceeds the 512 KiB size limit.")
@@ -88,3 +99,15 @@ class DrawingProject(ProjectFile):
     browser: bool = False
     toolbarHeight: int = 80
     version: int = 2
+
+
+@dataclass(frozen=True)
+class PagedProject(DrawingProject):
+    version: int = 3
+    brief: str = ""
+    features: dict = field(default_factory=dict)
+
+    def page(self, key):
+        if key:
+            return DrawingProject(**self.features[key])
+        return DrawingProject(self.name, self.script, self.browser, self.toolbarHeight)

@@ -3,6 +3,21 @@
   "updated_at": null,
   "contracts": [
     {
+      "contract_id": "appboard-project-v3",
+      "name": "Progressive native projects and saved feature pages",
+      "paths": ["appboard/project.py", "appboard/pagestream.py", "appboard/pages.py", "appboard/assets/drawing.js"],
+      "classification": "frozen-contract",
+      "status": "active",
+      "owner": "orchestrator",
+      "consumers": ["saved version 3 apps", "appboard/generation.py", "appboard/host.py"],
+      "compatibility": "Preserve the root script, brief and feature ID to native page mapping. Keep version 1 and 2 readers.",
+      "change_policy": "Review page persistence, stream assembly, SDK and runtime navigation together.",
+      "verification": ["tests/test_pagestream.py", "tests/test_desktop.py"],
+      "rationale": "Published drawing scripts can request lazy features from user input and share app state.",
+      "introduced_by": "docs/adr/0005-progressive-pages.md",
+      "review_trigger": "A change to page navigation, shared state or generated project format."
+    },
+    {
       "contract_id": "appboard-project-v2",
       "name": "Native drawing projects and drawing API",
       "paths": ["appboard/project.py", "appboard/assets/drawing.js", "appboard/native.py"],
