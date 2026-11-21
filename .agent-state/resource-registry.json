@@ -111,6 +111,69 @@
       "reason": "Each worker maintains provenance and checkpoints only inside its assigned runtime directory; the orchestrator retains recovery authority.",
       "source_of_truth": false,
       "review_trigger": "When the worker reaches a terminal state or recovery begins."
+    },
+    {
+      "pattern": "appboard/**",
+      "classification": "serialized-shared",
+      "lock_type": "serialized",
+      "owner": "orchestrator",
+      "reason": "Coordinate runtime, model client, compatibility tests and authoring documentation.",
+      "source_of_truth": true,
+      "review_trigger": "When multiple features need independent ownership."
+    },
+    {
+      "pattern": "tests/**",
+      "classification": "serialized-shared",
+      "lock_type": "serialized",
+      "owner": "orchestrator",
+      "reason": "Coordinate runtime, model client, compatibility tests and authoring documentation.",
+      "source_of_truth": true,
+      "review_trigger": "When multiple features need independent ownership."
+    },
+    {
+      "pattern": "docs/**",
+      "classification": "serialized-shared",
+      "lock_type": "serialized",
+      "owner": "orchestrator",
+      "reason": "Coordinate runtime, model client, compatibility tests and authoring documentation.",
+      "source_of_truth": true,
+      "review_trigger": "When multiple features need independent ownership."
+    },
+    {
+      "pattern": "README.md",
+      "classification": "serialized-shared",
+      "lock_type": "serialized",
+      "owner": "orchestrator",
+      "reason": "Coordinate runtime, model client, compatibility tests and authoring documentation.",
+      "source_of_truth": true,
+      "review_trigger": "When multiple features need independent ownership."
+    },
+    {
+      "pattern": "requirements.txt",
+      "classification": "serialized-shared",
+      "lock_type": "serialized",
+      "owner": "orchestrator",
+      "reason": "Coordinate runtime, model client, compatibility tests and authoring documentation.",
+      "source_of_truth": true,
+      "review_trigger": "When multiple features need independent ownership."
+    },
+    {
+      "pattern": "appboard/native.py",
+      "classification": "frozen-contract",
+      "lock_type": "frozen",
+      "owner": "orchestrator",
+      "reason": "Native drawing programs rely on this runtime contract.",
+      "source_of_truth": true,
+      "review_trigger": "The persisted format changes."
+    },
+    {
+      "pattern": "appboard/assets/drawing.js",
+      "classification": "frozen-contract",
+      "lock_type": "frozen",
+      "owner": "orchestrator",
+      "reason": "Native drawing programs rely on this runtime contract.",
+      "source_of_truth": true,
+      "review_trigger": "The persisted format changes."
     }
   ]
 }

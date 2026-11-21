@@ -19,31 +19,26 @@ STARTER = """<!doctype html>
 """
 
 
-@dataclass(frozen=True)
-class Project:
-    name: str = "Untitled app"
-    html: str = STARTER
-    browser: bool = False
-    toolbarHeight: int = 80
-    version: int = 1
-
+class ProjectFile:
     @classmethod
     def parse(cls, data):
-        if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1:
-            raise ValueError("AppBoard requires a version 1 project.")
-        if data.keys() - cls.__dataclass_fields__.keys():
+        if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] not in (1, 2):
+            raise ValueError("AppBoard supports project versions 1 and 2.")
+        project_type = DrawingProject if data["version"] == 2 else Project
+        if data.keys() - project_type.__dataclass_fields__.keys():
             raise ValueError("The project contains unknown fields.")
-        name, html = data.get("name"), data.get("html")
+        name = data.get("name")
+        field = project_type.source_field
         if not isinstance(name, str) or not name.strip() or len(name) > 100:
             raise ValueError("Enter an app name between 1 and 100 characters.")
-        if not isinstance(html, str) or not html.strip():
-            raise ValueError("The app needs an HTML document.")
+        if not isinstance(data.get(field), str) or not data[field].strip():
+            raise ValueError(f"The app needs nonempty {field} source.")
         if type(data.get("browser", False)) is not bool:
             raise ValueError("The browser setting must be true or false.")
         height = data.get("toolbarHeight", 80)
         if type(height) is not int or not 32 <= height <= 400:
             raise ValueError("Toolbar height must be between 32 and 400.")
-        project = cls(**data)
+        project = project_type(**data)
         if len(project.encode()) > MAX_BYTES:
             raise ValueError("The project exceeds the 512 KiB size limit.")
         return project
@@ -73,3 +68,23 @@ class Project:
         finally:
             if temp is not None:
                 temp.unlink(missing_ok=True)
+
+
+@dataclass(frozen=True)
+class Project(ProjectFile):
+    source_field = "html"
+    name: str = "Untitled app"
+    html: str = STARTER
+    browser: bool = False
+    toolbarHeight: int = 80
+    version: int = 1
+
+
+@dataclass(frozen=True)
+class DrawingProject(ProjectFile):
+    source_field = "script"
+    name: str = "Untitled app"
+    script: str = 'function draw(g, w, h) {\n  g.clear("#ffffff");\n}\n'
+    browser: bool = False
+    toolbarHeight: int = 80
+    version: int = 2

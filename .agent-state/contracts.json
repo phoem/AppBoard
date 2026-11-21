@@ -3,6 +3,21 @@
   "updated_at": null,
   "contracts": [
     {
+      "contract_id": "appboard-project-v2",
+      "name": "Native drawing projects and drawing API",
+      "paths": ["appboard/project.py", "appboard/assets/drawing.js", "appboard/native.py"],
+      "classification": "frozen-contract",
+      "status": "active",
+      "owner": "orchestrator",
+      "consumers": ["saved version 2 apps", "appboard/generation.py", "appboard/ui/NativeSurface.qml"],
+      "compatibility": "Keep version 1 readable and preserve version 2 draw/input signatures and primitive arguments.",
+      "change_policy": "Review the file format, generator instructions, native renderer and saved examples together.",
+      "verification": ["tests/test_native.py", "tests/test_desktop.py"],
+      "rationale": "Generated and manually authored drawing scripts use these interfaces.",
+      "introduced_by": "docs/adr/0004-native-drawing.md",
+      "review_trigger": "A new drawing, input or browser operation."
+    },
+    {
       "contract_id": "appboard-project-v1",
       "name": "Version 1 project files and browser capability",
       "paths": ["appboard/project.py", "appboard/assets/guest.js", "docs/RUNTIME.md"],
