@@ -14,6 +14,15 @@
   ],
   "resources": [
     {
+      "pattern": "appboard/library.py",
+      "classification": "frozen-contract",
+      "lock_type": "frozen",
+      "owner": "orchestrator",
+      "reason": "The library schema and update semantics preserve previously created apps.",
+      "source_of_truth": true,
+      "review_trigger": "A change to library identity, concurrent saves or schema version."
+    },
+    {
       "pattern": "appboard/project.py",
       "classification": "frozen-contract",
       "lock_type": "frozen",

@@ -3,6 +3,21 @@
   "updated_at": null,
   "contracts": [
     {
+      "contract_id": "appboard-library-v1",
+      "name": "Local app identity, revisions and portable source",
+      "paths": ["appboard/library.py", "appboard/host.py", "docs/adr/0006-local-app-library.md"],
+      "classification": "frozen-contract",
+      "status": "active",
+      "owner": "orchestrator",
+      "consumers": ["App library", "running sessions", "portable project import and export"],
+      "compatibility": "Read SQLite user_version 1, preserve completed source, and import portable project versions 1 through 3.",
+      "change_policy": "Review migrations, interrupted writes, concurrent editing and file compatibility together.",
+      "verification": ["tests/test_library.py", "tests/test_desktop.py"],
+      "rationale": "Reopening an app must retain its identity and its completed features across restarts.",
+      "introduced_by": "docs/adr/0006-local-app-library.md",
+      "review_trigger": "A new database version or change to library identity, revision or exchange semantics."
+    },
+    {
       "contract_id": "appboard-project-v3",
       "name": "Progressive native projects and saved feature pages",
       "paths": ["appboard/project.py", "appboard/pagestream.py", "appboard/pages.py", "appboard/assets/drawing.js"],
