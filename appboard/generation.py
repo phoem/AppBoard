@@ -61,6 +61,7 @@ class Generator(QObject):
     failed = Signal(str)
     choices = Signal(list)
     preview = Signal(str)
+    pageTitle = Signal(str)
 
     def __init__(self, parent=None, base=None, model=None):
         super().__init__(parent)
@@ -120,25 +121,16 @@ class Generator(QObject):
 
     def generate_page(self, context):
         self.cancel()
-        instructions = """Draw only the requested page of a native 2D desktop app.
-Return the JSON page specified by the schema. Emit name, browser, toolbarHeight, then sections, then input.
-Each sections element is a SHORT JavaScript function BODY that paints another permanent part of the page.
-Emit a first section with the background and app heading immediately, then add useful controls in separate
-sections. Each section runs inside draw(g,w,h), in order, in its own lexical block. No function wrappers.
-The input string is the body of input(e,g,w,h). Use g.data for shared JSON state. Initialize defaults
-without resetting user state on redraw. No DOM, imports or timers.
-For the main page implement its immediate controls. Draw each deferred navigation control using
-g.featureButton(x,y,width,height,label,id,description,color). The runtime draws it and handles the click.
-All colors are quoted JS strings. Give each feature a meaningful label and brief.
-Do NOT implement deferred pages in the main response. For a feature request implement that feature now.
-The host supplies Back. Model calls happen only on activation; never request features in draw.
-Every control must do something. Keep positions responsive, use the viewport supplied in the request.
-Example sections: ["g.clear('white'); g.text(16,12,'Sketchbook',22,'black');",
-"g.featureButton(16,52,140,40,'Gallery','gallery','Show saved sketches','teal');"]
-Use an empty input body when the only controls are featureButtons.
+        instructions = """Write one AppBoard native page as JSON. Follow this executable example:
+{"name":"Sketchbook","browser":false,"toolbarHeight":80,"sections":["g.clear('white'); g.text(16,12,'Sketchbook',22,'black');","g.featureButton(16,52,140,40,'Gallery','gallery','Show saved sketches','teal');"],"input":""}
+Start with a short heading section. Each string runs as statements inside draw(g,w,h) in its own block.
+g IS the drawing API. Call its methods directly. g.ctx, fillStyle, canvas, DOM and function wrappers do not work.
+Use g.featureButton(x,y,width,height,label,id,brief,color) for navigation. It draws and handles clicks.
+Implement only the requested page. Back is supplied. For other controls, input is the body of input(e,g,w,h).
+Keep shared state in g.data. Use concise code. Available primitives:
 """
-        stream = PageStream(self.preview.emit)
-        body = {"model": self.model, "messages": [{"role": "system", "content": instructions + DRAWING_API},
+        stream = PageStream(self.preview.emit, self.pageTitle.emit)
+        body = {"model": self.model, "temperature": 0.2, "messages": [{"role": "system", "content": instructions + DRAWING_API},
                 {"role": "user", "content": json.dumps(context)}], "stream": True,
                 "response_format": {"type": "json_schema", "json_schema": {
                     "name": "appboard_page", "strict": True, "schema": PAGE_SCHEMA}}}

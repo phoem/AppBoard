@@ -415,6 +415,21 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(editor.draft(), invalid)
         self.assertIn("TypeError", editor.status.text())
 
+    def test_invalid_section_requests_one_early_repair_and_rejects_empty_page(self):
+        session = self.board.mount(PagedProject(brief="Field notebook"))
+        flow = session.pages
+        flow.client.model = "fixture"
+        with patch.object(flow.client, "generate_page") as generate:
+            flow.start("", "Field notebook", draft=DrawingProject())
+            self.assertEqual(set(generate.call_args.args[0]), {"request", "page", "viewport"})
+            flow.preview("function draw(g){g.ctx.fillStyle='red'}")
+            self.assertEqual(generate.call_count, 2)
+            self.assertIn("fillStyle", generate.call_args.args[0]["correction"]["error"])
+            flow.finish(DrawingProject("Empty", "function draw(){}"))
+            self.assertTrue(session.canRetry)
+            self.assertIn("no native graphics", session.pageStatus)
+            self.assertEqual(session.project.name, "Untitled app")
+
     def test_cancel_failed_feature_and_retry_preserve_committed_page(self):
         path = Path(self.temp.name) / "existing.appboard"
         original = DrawingProject("Home", "function draw(g){g.clear('green')}")

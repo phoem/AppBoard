@@ -19,7 +19,7 @@ PAGE_SCHEMA = {
 
 def page_script(sections, handler=""):
     # Each section has lexical scope for layout variables. g.data is shared.
-    body = "\n".join("{\n" + section + "\n}" for section in sections)
+    body = "\n".join("{\n" + section + "\n}" for section in sections if section.strip())
     return "function draw(g,w,h) {\n" + body + "\n}\nfunction input(e,g,w,h) {\n" + handler + "\n}\n"
 
 
@@ -33,6 +33,7 @@ class SectionReader:
         self.key = None
         self.in_sections = False
         self.sections = []
+        self.name = None
 
     def append(self, text):
         for char in text:
@@ -48,6 +49,8 @@ class SectionReader:
                         if len(self.sections) == 32:
                             raise ValueError("Too many drawing sections.")
                         self.sections.append(value)
+                    elif self.depth == 1 and self.key == "name" and self.previous == ":":
+                        self.name = value
                     elif self.depth == 1 and self.previous in ("{", ","):
                         self.key = value
                     self.token = None
@@ -70,8 +73,9 @@ class SectionReader:
 
 
 class PageStream:
-    def __init__(self, preview):
+    def __init__(self, preview, title=None):
         self.preview = preview
+        self.title = title
         self.pending = bytearray()
         self.lines = []
         self.parts = []
@@ -86,10 +90,14 @@ class PageStream:
             raise ValueError("Model stream exceeded its transport limit.")
         self.pending.extend(chunk)
         before = len(self.reader.sections)
+        previous_name = self.reader.name
         lines = self.pending.split(b"\n")
         self.pending = lines.pop()
         for line in lines:
             self.line(line.rstrip(b"\r"))
+        if (self.title and not before and self.reader.name != previous_name and
+                isinstance(self.reader.name, str) and 0 < len(self.reader.name.strip()) <= 100):
+            self.title(self.reader.name)
         if len(self.reader.sections) > before:
             self.preview(page_script(self.reader.sections))
 
@@ -131,7 +139,8 @@ class PageStream:
             raise ValueError("Incomplete generated page.")
         sections = page["sections"]
         if (not isinstance(sections, list) or not 1 <= len(sections) <= 32 or
-                not all(isinstance(s, str) and s.strip() for s in sections) or not isinstance(page["input"], str)):
+                not all(isinstance(s, str) for s in sections) or not any(s.strip() for s in sections)
+                or not isinstance(page["input"], str)):
             raise ValueError("Invalid drawing sections or input handler.")
         return Project.parse({"version": 2, "name": page["name"], "browser": page["browser"],
                               "toolbarHeight": page["toolbarHeight"], "script": page_script(sections, page["input"])})

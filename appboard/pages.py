@@ -7,7 +7,7 @@ from PySide6.QtCore import QObject, QSettings
 
 from .generation import Generator
 from .native import Drawing
-from .project import PagedProject, Project
+from .project import DrawingProject, PagedProject, Project
 
 DRAW_ERRORS = (ValueError, quickjs.JSException, OverflowError, RecursionError)
 
@@ -22,6 +22,7 @@ class Pages(QObject):
         self.client.base = os.getenv("APPBOARD_MODEL_URL") or settings.value("generation/endpoint", self.client.base)
         self.client.model = os.getenv("APPBOARD_MODEL") or settings.value("generation/model", "")
         self.client.preview.connect(self.preview)
+        self.client.pageTitle.connect(self.show_title)
         self.client.generated.connect(self.finish)
         self.client.failed.connect(self.fail)
         self.surface.featureRequested.connect(self.open)
@@ -83,29 +84,55 @@ class Pages(QObject):
         self.retry_job = None
         self.previous = self.surface.drawing
         self.surface.stop()
-        self.message = "Drawing main page…" if not key else f"Drawing {key}…"
+        self.message = f"Waiting for {self.client.model}…"
         root = self.root
-        context = {"app": root.brief, "page": key or "main", "request": request,
-                   "viewport": list(self.surface.size), "existingFeatures": list(root.features)}
-        if key:
-            context["mainPageSource"] = root.script
-        if revision or key or draft:
+        context = {"page": key or "main", "request": request, "viewport": list(self.surface.size)}
+        if root.brief and root.brief != request:
+            context["app"] = root.brief
+        if root.features:
+            context["existingFeatures"] = list(root.features)
+        if revision or (draft and draft != DrawingProject()):
             context["currentPage"] = asdict(draft or self.page)
+        elif key:
+            context["fromPage"] = self.page.name
+            context["styleSource"] = self.page.script
         # Runtime values stay local. The model can reuse the shape of shared state.
-        context["sharedDataKeys"] = list(self.surface.data)
+        if self.surface.data:
+            context["sharedDataKeys"] = list(self.surface.data)
         self.context = context
         self.update()
         self.client.generate_page(context)
+
+    def show_title(self, name):
+        if self.job:
+            self.message = f"Drawing {name}…"
+            self.surface.nodes = [{"kind": "text", "x": 16, "y": 14, "value": name,
+                                   "size": 22, "color": "#26352c"}]
+            self.surface.frameChanged.emit()
+            self.update()
 
     def preview(self, script):
         if not self.job:
             return
         try:
             frame = Drawing(script).frame(*self.surface.size, browser=self.session.port.state, data=self.surface.data)
-        except DRAW_ERRORS:
-            return  # Keep the last valid preview. The complete page is checked before installation.
+        except DRAW_ERRORS as exc:
+            self.correct(script, exc)
+            return
+        if not frame["nodes"]:
+            return
         self.surface.nodes = frame["nodes"]
         self.surface.frameChanged.emit()
+
+    def correct(self, source, exc):
+        if "correction" in self.context:
+            self.client.cancel()
+            self.fail(str(exc))
+            return
+        self.context = {**self.context, "correction": {"error": str(exc)[:1000], "source": source}}
+        self.message = "Correcting the generated drawing…"
+        self.update()
+        self.client.generate_page(self.context)
 
     def install(self, key, page):
         root = self.root
@@ -123,16 +150,12 @@ class Pages(QObject):
             return
         key, _, revision, _ = self.job
         try:
-            Drawing(page.script).frame(*self.surface.size, browser=self.session.port.state, data=self.surface.data)
+            frame = Drawing(page.script).frame(*self.surface.size, browser=self.session.port.state, data=self.surface.data)
+            if not frame["nodes"] and not page.browser:
+                raise ValueError("The page drew no native graphics. Draw visible content with g.text or g.rect.")
             self.install(key, page)
         except DRAW_ERRORS as exc:
-            if "correction" not in self.context:
-                self.context = {**self.context, "correction": {"error": str(exc)[:1000], "source": page.script}}
-                self.message = "Correcting the generated drawing…"
-                self.update()
-                self.client.generate_page(self.context)
-                return
-            self.fail(str(exc))
+            self.correct(page.script, exc)
             return
         if key != self.key and not revision:
             self.history.append((self.key, self.previous))

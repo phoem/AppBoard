@@ -6,6 +6,8 @@ New projects keep a native main-page script, a `brief` containing the original r
 
 For generation, the server streams a page name, browser settings, ordered drawing sections and an input handler. Each complete section contributes the next part of the visible scene. A section contains the body of a drawing function and has its own lexical scope. The final source combines those sections into a normal, editable `draw` function. Input becomes active after validation. **Stop** restores the previous page and **Retry** repeats the pending request.
 
+The panel shows the model's page name as soon as it arrives. AppBoard executes each completed prefix in a temporary native drawing context. An invalid prefix starts one correction immediately. An empty final frame also triggers correction unless the page hosts a browser. If correction fails, the panel restores the previous page and offers Retry. A successful render checks the drawing API and frame structure. Whether the page fulfills the prompt still depends on the generated behavior.
+
 Use `g.featureButton(x,y,w,h,label,id,description,color)` in a drawing section to draw a feature button with built-in pointer handling. Custom click or keyboard handlers can use `g.openFeature(id, description)`. Choose a stable lowercase ID starting with a letter, with up to 64 letters, digits, hyphens or underscores. The description tells the model what to build on first use. The host supplies a Back control. Each app supports up to 64 saved features.
 
 ```javascript

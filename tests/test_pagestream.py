@@ -12,6 +12,18 @@ def event(text):
 
 
 class PageStreamTests(unittest.TestCase):
+    def test_title_arrives_before_first_drawing_section(self):
+        titles, previews = [], []
+        stream = PageStream(previews.append, titles.append)
+        stream.feed(event('{"name":"Field note'))
+        self.assertEqual(titles, [])
+        stream.feed(event('book",'))
+        self.assertEqual(titles, ["Field notebook"])
+        self.assertEqual(previews, [])
+        stream.feed(event('"sections":["g.clear(\\"red\\")"]'))
+        self.assertEqual(len(previews), 1)
+        self.assertEqual(len(titles), 1)
+
     def test_arbitrary_fragment_boundaries_and_escaped_strings(self):
         previews = []
         stream = PageStream(previews.append)
@@ -31,6 +43,13 @@ class PageStreamTests(unittest.TestCase):
             stream.feed(event('{"sections":["g.clear(\\"red\\")"') + ending)
             with self.assertRaises(ValueError):
                 stream.finish()
+
+    def test_blank_section_between_valid_draws_is_a_noop(self):
+        stream = PageStream(lambda _: None)
+        page = dict(name="Gallery", browser=False, toolbarHeight=80,
+                    sections=["g.clear('white')", "", "g.text(2,2,'Gallery')"], input="")
+        stream.feed(event(json.dumps(page)) + b"data: [DONE]\n\n")
+        self.assertIn("Gallery", stream.finish().script)
 
     def test_invalid_page_files(self):
         root = asdict(PagedProject())
