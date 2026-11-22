@@ -1,12 +1,14 @@
-import hashlib
+import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QSettings, Signal, Slot
+from PySide6.QtCore import QObject, Property, QSettings, QStandardPaths, Signal, Slot
 from PySide6.QtQml import QQmlEngine
 
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QLineEdit, QMessageBox
 
 from .editor import Editor, PageRequest
+from .library import Library
+from .library_dialog import LibraryDialog
 from .modelpicker import ModelPicker
 from .native import DrawingSurface
 from .pages import Pages
@@ -39,13 +41,15 @@ class Session(QObject):
     changed = Signal()
     reloadSource = Signal()
     removed = Signal()
+    activated = Signal()
     browserCommand = Signal(str, str)
 
-    def __init__(self, board, project, path=None):
+    def __init__(self, board, project, version=None, pending=False):
         super().__init__(board)
-        self.board, self.project, self.path = board, project, path
-        self.saved = project if path else None
-        self.fingerprint = self.digest(path) if path else None
+        self.board, self.project, self.version = board, project, version
+        self.saved = project if version else None
+        self.saved_pending = pending
+        self.storage_message = ""
         self._html = document(project) if project.version == 1 else ""
         self._guest = None
         self._web = None
@@ -53,19 +57,19 @@ class Session(QObject):
         self.port.command.connect(self.browserCommand)
         self.surface = DrawingSurface(self.port) if project.version >= 2 else None
         self.pages = Pages(self) if self.surface else None
+        if pending:
+            self.pages.home_ready = False
+            self.pages.retry_job = ("", project.brief, False, project.page(""))
+            self.pages.message = "Main page unfinished. Select Retry to generate it."
         QQmlEngine.setObjectOwnership(self, QQmlEngine.ObjectOwnership.CppOwnership)
-
-    @staticmethod
-    def digest(path):
-        with Path(path).open("rb") as stream:
-            return hashlib.file_digest(stream, "sha256").digest()
 
     @property
     def active_page(self):
         return self.pages.page if self.pages else self.project
 
     title = Property(str, lambda self: self.active_page.name, notify=changed)
-    dirty = Property(bool, lambda self: self.project != self.saved, notify=changed)
+    dirty = Property(bool, lambda self: self.project != self.saved or self.saved_pending != (not self.canSave), notify=changed)
+    storageStatus = Property(str, lambda self: self.storage_message, notify=changed)
     hasBrowser = Property(bool, lambda self: self.active_page.browser, notify=changed)
     toolbarHeight = Property(int, lambda self: self.active_page.toolbarHeight, notify=changed)
     building = Property(bool, lambda self: bool(self.pages and self.pages.job), notify=changed)
@@ -130,11 +134,13 @@ class Session(QObject):
                 return
             self.pages.home_ready = True
             self.pages.message, self.pages.retry_job = "", None
+            self.save()
             self.changed.emit()
             self.surface.load(project.script)
             return
         if self.surface:
             self.project = project
+            self.save()
             self.changed.emit()
             self.surface.load(project.script)
             return
@@ -143,31 +149,41 @@ class Session(QObject):
             return
         html = document(project)
         self.project, self._html = project, html
+        self.save()
         self.changed.emit()
         self.reloadSource.emit()
 
     @Slot(result=bool)
     def save(self):
+        if not self.dirty:
+            return True
+        previous = self.version
+        try:
+            self.version = self.board.library.store(self.project, not self.canSave, previous)
+        except (sqlite3.Error, ValueError, OSError) as exc:
+            self.storage_message = f"Library save failed. {exc}"
+            self.changed.emit()
+            return False
+        self.saved, self.saved_pending = self.project, not self.canSave
+        self.storage_message = ("Another session changed this app. Saved your edits as a library copy."
+                                if previous and previous.app_id != self.version.app_id else "")
+        self.changed.emit()
+        return True
+
+    @Slot(result=bool)
+    def exportApp(self):
         if not self.canSave:
             return False
-        path = self.path
-        if path is None:
-            name, _ = QFileDialog.getSaveFileName(None, "Save app", "", "AppBoard projects (*.appboard)")
-            if not name:
+        name, _ = QFileDialog.getSaveFileName(None, "Export app", "", "AppBoard projects (*.appboard)")
+        if not name:
+            return False
+        path = Path(name)
+        if path.suffix.lower() != ".appboard":
+            path = path.with_name(path.name + ".appboard")
+            if path.exists() and not self.confirm_overwrite(path):
                 return False
-            path = Path(name)
-            if not path.suffix:
-                path = path.with_suffix(".appboard")
-                if path.exists() and not self.confirm_overwrite(path):
-                    return False
         try:
-            if path == self.path and path.exists() and self.digest(path) != self.fingerprint:
-                if not self.confirm_overwrite(path):
-                    return False
             self.project.save(path)
-            self.path, self.saved = path, self.project
-            self.fingerprint = hashlib.sha256(self.project.encode()).digest()
-            self.changed.emit()
             return True
         except (OSError, ValueError) as exc:
             self.board.error(str(exc))
@@ -179,7 +195,7 @@ class Session(QObject):
                                     QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Yes
 
     def may_close(self):
-        if not self.dirty or not self.canSave:
+        if not self.dirty:
             return True
         choice = QMessageBox.question(None, "Save app?", f"Save changes to {self.title}?",
                                       QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard |
@@ -200,9 +216,13 @@ class Session(QObject):
 class Board(QObject):
     opened = Signal(QObject)
 
-    def __init__(self):
+    def __init__(self, library_path=None):
         super().__init__()
         self.sessions = []
+        if library_path is None:
+            base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+            library_path = Path(base) / "library.sqlite3"
+        self.library = Library(library_path)
 
     @staticmethod
     def error(message):
@@ -228,8 +248,10 @@ class Board(QObject):
         picker.cancel()
         return picker.combo.currentData() if accepted else None
 
-    def mount(self, project, path=None):
-        session = Session(self, project, path)
+    def mount(self, project, version=None, pending=False):
+        session = Session(self, project, version, pending)
+        if version is None:
+            session.save()
         self.sessions.append(session)
         self.opened.emit(session)
         if session.surface:
@@ -240,9 +262,9 @@ class Board(QObject):
     def create(self):
         draft = self.draft(DrawingProject(), progressive=True)
         if isinstance(draft, PageRequest):
-            project = PagedProject(brief=draft.prompt)
-            session = self.mount(project)
-            session.pages.home_ready = False
+            source = draft.source
+            project = PagedProject(source.name, source.script, source.browser, source.toolbarHeight, brief=draft.prompt)
+            session = self.mount(project, pending=True)
             session.pages.client.base, session.pages.client.model = draft.endpoint, draft.model
             session.pages.start("", draft.prompt, draft=draft.source)
         elif draft:
@@ -250,13 +272,33 @@ class Board(QObject):
 
     @Slot()
     def open(self):
-        name, _ = QFileDialog.getOpenFileName(None, "Open app", "", "AppBoard projects (*.appboard);;All files (*)")
-        if name:
-            self.open_path(Path(name))
+        try:
+            dialog = LibraryDialog(self.library.entries())
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            self.error(str(exc))
+            return
+        if dialog.exec():
+            if dialog.importing:
+                name, _ = QFileDialog.getOpenFileName(None, "Import app", "", "AppBoard projects (*.appboard);;All files (*)")
+                if name:
+                    self.open_path(Path(name))
+            elif dialog.selected_id:
+                self.open_record(dialog.selected_id)
+
+    def open_record(self, app_id):
+        for session in self.sessions:
+            if session.version and session.version.app_id == app_id:
+                session.activated.emit()
+                return session
+        try:
+            project, pending, version = self.library.load(app_id)
+            return self.mount(project, version, pending)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            self.error(str(exc))
 
     def open_path(self, path):
         try:
-            return self.mount(Project.load(path), path)
+            return self.mount(Project.load(path))
         except (ValueError, OSError) as exc:
             self.error(str(exc))
 

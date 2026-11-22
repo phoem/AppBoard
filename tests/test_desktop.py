@@ -1,6 +1,7 @@
 """Integration tests with the actual Qt Quick shell, Chromium and a loopback model double."""
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import time
@@ -15,7 +16,7 @@ from PySide6.QtQml import QQmlContext, QQmlExpression, qmlContext
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from appboard.__main__ import desktop
-from appboard.editor import Editor
+from appboard.editor import Editor, PageRequest
 from appboard.generation import Generator
 from appboard.project import DrawingProject, PagedProject, Project
 
@@ -40,7 +41,9 @@ class Console(QObject):
 class DesktopTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app, cls.board, cls.engine = desktop()
+        folder = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(folder.cleanup)
+        cls.app, cls.board, cls.engine = desktop(Path(folder.name) / "library.sqlite3")
         cls.window = cls.engine.rootObjects()[0]
 
     def setUp(self):
@@ -84,35 +87,64 @@ class DesktopTests(unittest.TestCase):
         view = self.window.findChild(QObject, "guestView")
         console = Console(view)
         self.wait(lambda: "computed 42" in console.messages)
-        with tempfile.TemporaryDirectory(dir=self.temp.name) as folder:
-            file = Path(folder) / "saved.appboard"
-            with patch("appboard.host.QFileDialog.getSaveFileName", return_value=(str(file), "")):
-                self.assertTrue(session.save())
-            session.close()
-            self.wait(lambda: not self.window.findChildren(QObject, "appPanel"))
-            reopened = self.board.open_path(file)
-            self.assertEqual(reopened.project.html, source)
-            self.assertFalse(reopened.dirty)
-            reopened.apply(Project("Colour", '<script>console.info("revised")</script>'))
-            self.assertTrue(reopened.dirty)
-            view = self.window.findChild(QObject, "guestView")
-            console = Console(view)
-            self.wait(lambda: "revised" in console.messages)
-            self.assertTrue(reopened.save())
-            self.assertEqual(Project.load(file).name, "Colour")
+        app_id = session.version.app_id
+        session.close()
+        self.wait(lambda: not self.window.findChildren(QObject, "appPanel"))
+        def pick_saved_app():
+            dialog = QApplication.activeModalWidget()
+            dialog.filter.setText("Arithmetic experiment")
+            dialog.open_button.click()
+        QTimer.singleShot(0, pick_saved_app)
+        self.board.open()
+        reopened, = self.board.sessions
+        self.assertEqual(reopened.version.app_id, app_id)
+        self.assertEqual(reopened.project.html, source)
+        reopened.apply(Project("Colour", '<script>console.info("revised")</script>'))
+        self.assertFalse(reopened.dirty)
+        view = self.window.findChild(QObject, "guestView")
+        console = Console(view)
+        self.wait(lambda: "revised" in console.messages)
+        self.assertEqual(self.board.library.load(app_id)[0].name, "Colour")
 
-    def test_cancel_close_and_preserve_external_edits(self):
+    def test_import_detaches_source_and_failed_autosave_can_be_retried(self):
         path = Path(self.temp.name) / "shared.appboard"
         Project("First").save(path)
-        session = self.board.open_path(path)
-        session.apply(Project("My edit"))
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().import_button.click())
+        with patch("appboard.host.QFileDialog.getOpenFileName", return_value=(str(path), "")):
+            self.board.open()
+        session, = self.board.sessions
+        with patch.object(self.board.library, "store", side_effect=sqlite3.OperationalError("disk full")):
+            session.apply(Project("My edit"))
+        self.assertIn("disk full", session.storageStatus)
         Project("External edit").save(path)
         with patch("appboard.host.QMessageBox.question", return_value=QMessageBox.StandardButton.Cancel):
-            self.assertFalse(session.save())
             session.close()
         self.assertEqual(Project.load(path).name, "External edit")
         self.assertIn(session, self.board.sessions)
         self.assertTrue(session.dirty)
+        self.assertTrue(session.save())
+        self.assertEqual(self.board.library.load(session.version.app_id)[0].name, "My edit")
+
+    def test_unfinished_generation_reopens_with_original_prompt_and_custom_draft(self):
+        draft = DrawingProject("Draft", "function draw(g){g.clear('red')}")
+        request = PageRequest("Make a transit diary", draft, "http://localhost/v1", "fixture")
+        with patch.object(self.board, "draft", return_value=request), patch.object(Generator, "generate_page"):
+            self.board.create()
+        session, = self.board.sessions
+        app_id = session.version.app_id
+        self.assertTrue(self.board.library.load(app_id)[1])
+        session.close()
+        session = self.board.open_record(app_id)
+        self.assertTrue(session.canRetry)
+        self.assertFalse(session.canSave)
+        session.pages.client.model = "fixture"
+        with patch.object(Generator, "generate_page") as generate:
+            session.retryPage()
+            context = generate.call_args.args[0]
+            self.assertEqual(context["currentPage"]["script"], draft.script)
+            self.assertEqual(context["request"], request.prompt)
+            session.pages.finish(DrawingProject("Diary", "function draw(g){g.text(1,1,'Trips')}"))
+        self.assertEqual(self.board.library.load(app_id)[:2], (session.project, False))
 
     def test_failed_generation_preserves_editor_source(self):
         project = Project("My sketch", "<canvas></canvas>")
@@ -164,9 +196,10 @@ class DesktopTests(unittest.TestCase):
         self.assertFalse(session.surface.problem)
         session.apply(DrawingProject("Edited", "function draw(g){g.clear('blue')}"))
         self.wait(lambda: pixel() == "#0000ff")
-        file = Path(self.temp.name) / "edited.appboard"
-        with patch("appboard.host.QFileDialog.getSaveFileName", return_value=(str(file), "")):
-            self.assertTrue(session.save())
+        chosen = Path(self.temp.name) / "edited.v2"
+        file = chosen.with_name("edited.v2.appboard")
+        with patch("appboard.host.QFileDialog.getSaveFileName", return_value=(str(chosen), "")):
+            self.assertTrue(session.exportApp())
         session.close()
         self.wait(lambda: not self.window.findChildren(QObject, "appPanel"))
         reopened = self.board.open_path(file)
@@ -396,15 +429,17 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(session.surface.data["visits"], 2)
         path = Path(self.temp.name) / "library.appboard"
         with patch("appboard.host.QFileDialog.getSaveFileName", return_value=(str(path), "")):
-            self.assertTrue(session.save())
+            self.assertTrue(session.exportApp())
+        saved_id = session.version.app_id
         session.close()
         self.wait(lambda: not self.board.sessions and not self.window.findChildren(QObject, "appPanel"))
-        session = self.board.open_path(path)
+        session = self.board.open_record(saved_id)
         surface = self.window.findChild(QObject, "nativeSurface")
         click()
         self.assertEqual(session.pages.key, "browser")
         self.assertEqual(session.active_page.name, "Restyled")
         self.assertEqual(len(calls), 2)
+        self.assertEqual(Project.load(path), session.project)
 
     def test_invalid_native_generation_stays_editable(self):
         editor = Editor(DrawingProject())
@@ -429,6 +464,27 @@ class DesktopTests(unittest.TestCase):
             self.assertTrue(session.canRetry)
             self.assertIn("no native graphics", session.pageStatus)
             self.assertEqual(session.project.name, "Untitled app")
+
+    def test_click_failure_is_repaired_before_saving_a_feature(self):
+        session = self.board.mount(PagedProject("Notebook", brief="Generate only the main page"))
+        flow = session.pages
+        flow.client.model = "fixture"
+        with patch.object(flow.client, "generate_page") as generate:
+            flow.open("gallery", "Show a gallery of images")
+            ctx = generate.call_args.args[0]
+            self.assertEqual(ctx["request"], "Show a gallery of images")
+            self.assertNotIn(session.project.script, json.dumps(ctx))
+            self.assertNotIn(session.project.brief, json.dumps(ctx))
+            flow.finish(DrawingProject("Gallery", "function draw(g){g.text(8,8,'More')} "
+                                       "function input(e,g){if(e.type==='down' && e.x>8)g.missing()}"))
+            self.assertEqual(generate.call_count, 2)
+            self.assertEqual(self.board.library.load(session.version.app_id)[0].features, {})
+            flow.finish(DrawingProject("Gallery", "function draw(g){g.text(8,8,'Images')} "
+                                       "function input(e,g){g.data.clicked=true;g.openFeature('more','More images')}"))
+        self.assertEqual(flow.key, "gallery")
+        self.assertNotIn("clicked", session.surface.data)
+        self.assertFalse(session.building)
+        self.assertIn("gallery", self.board.library.load(session.version.app_id)[0].features)
 
     def test_cancel_failed_feature_and_retry_preserve_committed_page(self):
         path = Path(self.temp.name) / "existing.appboard"

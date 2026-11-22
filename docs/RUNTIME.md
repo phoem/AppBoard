@@ -19,11 +19,13 @@ function draw(g, w, h) {
 }
 ```
 
-`g.data` is a per-instance JSON object shared between pages, limited to 64 KiB. A feature request includes the brief, current and main page source, existing feature IDs and shared data key names. Runtime data values remain local. **Edit** changes the visible page. **Save** writes the main page and all completed features together. Reopening starts on the main page. Visiting a saved feature works offline, and a new feature uses the local model selection.
+`g.data` is a per-instance JSON object shared between pages, limited to 64 KiB. A new feature request includes the requested behavior, app and calling page names, palette, existing feature IDs and shared data key names. Revisions include the page being edited. Runtime data values remain local. Before accepting a generated page, AppBoard exercises up to four label positions in a disposable interpreter. Browser commands, feature requests and data changes from this check are discarded.
+
+**Edit** changes the visible page. AppBoard saves each accepted page to the app’s SQLite record. Reopening from **Library** starts on the main page. Visiting a saved feature works offline. **Export** writes all completed pages together. Importing a file creates a new library entry.
 
 ## Native drawing projects · version 2
 
-Previously saved single-page native projects retain their format for manual edits. A successful streamed revision or a first generated feature upgrades the instance to version 3. The file on disk changes when you save.
+Previously saved single-page native projects retain their format for manual edits. A successful streamed revision or a first generated feature upgrades the library copy to version 3. Export writes the current version to the chosen file.
 
 Single-page files store `version: 2`, `name`, and a JavaScript `script`. The size limit is 512 KiB. Optional `browser` and `toolbarHeight` fields have the same defaults as version 1. The following drawing operations also apply to every page in version 3.
 

@@ -1,6 +1,6 @@
 # AppBoard
 
-AppBoard opens a resizable 1920 × 1080 desktop workspace. Create an app by describing it to a model or by writing its source. Each running app gets a movable panel with Edit, Save and Close controls. The board starts empty.
+AppBoard opens a resizable 1920 × 1080 desktop workspace. Create an app by describing it to a model or by writing its source. Each running app gets a movable panel. AppBoard automatically saves your apps in a searchable local library. The board starts empty.
 
 ## Run on Windows
 
@@ -21,9 +21,10 @@ If you installed the original HTML runtime, rerun the pip install command above 
    Try “Build a sketchbook with a drawing page and a gallery.” Opening **Gallery** for the first time asks the model to draw that feature. **Back** returns to the previous page. Subsequent visits reuse the generated page.
 3. You can also write a drawing script and select **Run app**. Drag the panel by its title bar or resize it from the bottom-right corner.
 4. Select **Edit** to change the visible page or request a streamed revision. **Stop** cancels a build and **Retry** repeats it. Applying a revision restarts that page's script.
-5. Select **Save** to write the main page and its completed features into one portable `.appboard` file. **Open** or **Ctrl+O** reopens it on the main page. Saved features are available offline. Unvisited features need the model on first use.
+5. Close the panel when you're done. **Library** or **Ctrl+O** lets you search by app name or original prompt and reopen the app. Completed pages open offline. An interrupted first build appears as **unfinished** and can resume with **Retry**.
+6. To share an app, select **Export** on its panel and send the resulting `.appboard` file. The recipient selects **Library → Import .appboard…** to add an independent, editable copy. Existing project files import the same way.
 
-The project contains app source and presentation settings. Variables in memory and browsing sessions last for the lifetime of the instance. Reopening a saved project works offline. Sites in a browser app still require their usual network access.
+The library stores app source, the generation brief, presentation settings and completed features. On Windows the database is normally at `%LOCALAPPDATA%\AppBoard\AppBoard\library.sqlite3`. Variables in memory and browsing sessions last for the lifetime of the instance. Websites and first-time generation of a feature still need their usual connections.
 
 ## Connect a model
 
@@ -50,6 +51,7 @@ To include live inference tests, set `APPBOARD_LIVE_MODEL` to an installed model
 ## Project documents
 
 - [Implementation plan and milestone acceptance tests](docs/PLAN.md)
+- [ADR 0006 · Local app library and portable copies](docs/adr/0006-local-app-library.md)
 - [App project and browser API reference](docs/RUNTIME.md)
 - [ADR 0005 · Progressive pages and first-use generation](docs/adr/0005-progressive-pages.md)
 - [ADR 0004 · Native 2D app rendering](docs/adr/0004-native-drawing.md)

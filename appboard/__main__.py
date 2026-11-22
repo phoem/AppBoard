@@ -10,14 +10,14 @@ from PySide6.QtWidgets import QApplication
 from .host import Board
 
 
-def desktop():
+def desktop(library_path=None):
     QtWebEngineQuick.initialize()
     app = QApplication.instance() or QApplication([sys.argv[0]])
     app.setApplicationName("AppBoard")
     app.setOrganizationName("AppBoard")
     app.setStyle("Fusion")
     QQuickStyle.setStyle("Basic")
-    board = Board()
+    board = Board(library_path)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("boardApi", board)
     engine.load(QUrl.fromLocalFile(str(Path(__file__).with_name("ui") / "Main.qml")))

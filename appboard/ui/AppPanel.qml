@@ -27,6 +27,10 @@ Rectangle {
         function onHeightChanged() { panel.fit() }
     }
     function raisePanel() { panel.z = ++parent.nextZ }
+    Connections {
+        target: panel.session
+        function onActivated() { panel.raisePanel(); panel.forceActiveFocus() }
+    }
     TapHandler { onPressedChanged: if (pressed) panel.raisePanel() }
     Rectangle {
         id: bar
@@ -45,7 +49,10 @@ Rectangle {
             anchors.leftMargin: 12; anchors.rightMargin: 5; spacing: 5
             Label {
                 Layout.fillWidth: true
-                text: (panel.session.pageStatus || panel.session.title) + (panel.session.dirty && panel.session.canSave ? "  •" : "")
+                text: panel.session.storageStatus || panel.session.pageStatus || panel.session.title
+                ToolTip.visible: labelHover.hovered && truncated
+                ToolTip.text: text
+                HoverHandler { id: labelHover }
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: "#edf3ee"; font.pixelSize: 13; font.bold: true
@@ -54,7 +61,8 @@ Rectangle {
             BoardButton { text: "Stop"; visible: panel.session.building; onClicked: panel.session.cancelPage() }
             BoardButton { text: "Retry"; visible: panel.session.canRetry; onClicked: panel.session.retryPage() }
             BoardButton { text: "Edit"; visible: !panel.session.building; onClicked: panel.session.edit() }
-            BoardButton { text: "Save"; visible: !panel.session.building && panel.session.canSave; onClicked: panel.session.save() }
+            BoardButton { text: "Retry save"; visible: panel.session.dirty; onClicked: panel.session.save() }
+            BoardButton { text: "Export"; visible: panel.session.canSave && !panel.session.building; onClicked: panel.session.exportApp() }
             BoardButton { text: "Close"; onClicked: panel.session.close() }
         }
     }

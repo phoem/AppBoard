@@ -32,7 +32,7 @@ ApplicationWindow {
             }
             Label { text: "AppBoard"; color: "#f0f4f1"; font.family: "Segoe UI"; font.weight: Font.DemiBold; font.pixelSize: 17 }
             Item { Layout.fillWidth: true }
-            BoardButton { text: "Open"; onClicked: boardApi.open() }
+            BoardButton { text: "Library"; onClicked: boardApi.open() }
             BoardButton { text: "+  New app"; primary: true; onClicked: boardApi.create() }
         }
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#37403b" }

@@ -87,7 +87,7 @@ class Pages(QObject):
         self.message = f"Waiting for {self.client.model}…"
         root = self.root
         context = {"page": key or "main", "request": request, "viewport": list(self.surface.size)}
-        if root.brief and root.brief != request:
+        if root.brief and root.brief != request and (revision or not key):
             context["app"] = root.brief
         if root.features:
             context["existingFeatures"] = list(root.features)
@@ -95,7 +95,9 @@ class Pages(QObject):
             context["currentPage"] = asdict(draft or self.page)
         elif key:
             context["fromPage"] = self.page.name
-            context["styleSource"] = self.page.script
+            context["task"] = "Implement the requested feature here, including its contents and behavior."
+            context["appName"] = root.name
+            context["palette"] = list(dict.fromkeys(n["color"] for n in self.surface.nodes if "color" in n))[:8]
         # Runtime values stay local. The model can reuse the shape of shared state.
         if self.surface.data:
             context["sharedDataKeys"] = list(self.surface.data)
@@ -106,7 +108,10 @@ class Pages(QObject):
     def show_title(self, name):
         if self.job:
             self.message = f"Drawing {name}…"
-            self.surface.nodes = [{"kind": "text", "x": 16, "y": 14, "value": name,
+            width, height = self.surface.size
+            self.surface.nodes = [{"kind": "rect", "x": 0, "y": 0, "w": width, "h": height,
+                                   "color": "#ffffff", "radius": 0},
+                                  {"kind": "text", "x": 16, "y": 14, "value": name,
                                    "size": 22, "color": "#26352c"}]
             self.surface.frameChanged.emit()
             self.update()
@@ -145,14 +150,30 @@ class Pages(QObject):
         Project.parse(asdict(root))
         self.session.project = root
 
+    def validate_page(self, page):
+        drawing = Drawing(page.script)
+        width, height = self.surface.size
+        if page.browser:
+            height = min(height, page.toolbarHeight)
+        state = self.session.port.state
+        frame = drawing.frame(width, height, browser=state, data=self.surface.data)
+        if not frame["nodes"] and not page.browser:
+            raise ValueError("The page drew no native graphics. Draw visible content with g.text or g.rect.")
+        # Exercise a few label positions in the disposable VM. Commands, navigation
+        # and state from these synthetic clicks never reach the real app.
+        points = [(n["x"] + 2, n["y"] + 2) for n in frame["nodes"] if n["kind"] == "text"]
+        points = [(x, y) for x, y in points if 0 <= x < width and 0 <= y < height]
+        for x, y in (points[:4] or [(width / 2, height / 2)]):
+            for kind, buttons in (("down", 1), ("up", 0)):
+                event = {"type": kind, "button": 0, "buttons": buttons, "x": x, "y": y}
+                frame = drawing.frame(width, height, event, state, frame["data"])
+
     def finish(self, page):
         if not self.job:
             return
         key, _, revision, _ = self.job
         try:
-            frame = Drawing(page.script).frame(*self.surface.size, browser=self.session.port.state, data=self.surface.data)
-            if not frame["nodes"] and not page.browser:
-                raise ValueError("The page drew no native graphics. Draw visible content with g.text or g.rect.")
+            self.validate_page(page)
             self.install(key, page)
         except DRAW_ERRORS as exc:
             self.correct(page.script, exc)
@@ -163,6 +184,7 @@ class Pages(QObject):
         self.context = None
         self.home_ready = True
         self.message = ""
+        self.session.save()
         self.update()
         self.surface.load(page.script)
 

@@ -32,6 +32,9 @@ For other apps use browser false and toolbarHeight 80. Preserve unrelated behavi
 DRAWING_INSTRUCTIONS = """Create a working native 2D AppBoard app. Return version 2, name, script, browser, toolbarHeight.
 script is plain JavaScript. Implement function draw(g,w,h) and optionally function input(e,g,w,h).
 App-level variables persist until close or source reload. Render the full scene on each draw.
+For example, a status display can keep let label='Ready'; draw text with g.text(8,8,label);
+and update label inside function input(e,g,w,h){if(e.type==='down')label='Selected';}.
+Use the requested interaction and exact text format. The host redraws automatically after input.
 """ + DRAWING_API
 
 INSTRUCTIONS = """Create or revise a runnable AppBoard project from the user's request.
@@ -101,6 +104,7 @@ class Generator(QObject):
 
         def submit(model):
             self._request("chat/completions", {"model": model, "messages": messages, "stream": False,
+                                               **({"temperature": 0.2} if native else {}),
                                                "response_format": {"type": "json_schema", "json_schema": {
                                                    "name": "appboard_project", "strict": True,
                                                    "schema": DRAWING_SCHEMA if native else SCHEMA}}}, received)
@@ -126,8 +130,11 @@ class Generator(QObject):
 Start with a short heading section. Each string runs as statements inside draw(g,w,h) in its own block.
 g IS the drawing API. Call its methods directly. g.ctx, fillStyle, canvas, DOM and function wrappers do not work.
 Use g.featureButton(x,y,width,height,label,id,brief,color) for navigation. It draws and handles clicks.
+Feature IDs start with a lowercase letter and use lowercase letters, digits, hyphens or underscores.
+When feature buttons handle all interactions, return input as an empty string.
 Implement only the requested page. Back is supplied. For other controls, input is the body of input(e,g,w,h).
-Keep shared state in g.data. Use concise code. Available primitives:
+Keep shared state in g.data. Show an empty state for empty collections. Add sample records only if requested.
+Use concise code. Available primitives:
 """
         stream = PageStream(self.preview.emit, self.pageTitle.emit)
         body = {"model": self.model, "temperature": 0.2, "messages": [{"role": "system", "content": instructions + DRAWING_API},

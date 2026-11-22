@@ -17,6 +17,12 @@ A graphics smoke check reported Direct3D 11 for the Qt Quick window and ANGLE on
 
 ## Following milestones
 
+### Local library and generation diagnostics · implemented
+
+Save the prompt and draft when generation starts. Save accepted main pages, features and edits to SQLite. Verify that an unfinished app can retry after reopening, that an imported copy is independent, and that edits survive a failed save or concurrent writer. Exercise the desktop library search and reopen completed features with zero additional model requests. [ADR 0006](adr/0006-local-app-library.md)
+
+Live testing with LM Studio exposed native pages that used a browser canvas API, repeated the calling page, or failed only on click. Stream the generated title early, send a feature-specific request, and check drawing and pointer handling before installation. Time first title and interactive completion separately because inference latency varies across requests.
+
 ### Progressive rendering and lazy feature generation · implemented
 
 Mount a panel when the user submits a prompt, paint complete drawing sections during streaming, then activate input on the validated page. Generate secondary pages on first navigation, retain the previous page on a cancelled request, and persist completed features with the app. The delayed-stream desktop test checks the first paint before releasing the remaining response, request counts before and after navigation, and reuse after reopening. See [ADR 0005](adr/0005-progressive-pages.md).
