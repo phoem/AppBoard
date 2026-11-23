@@ -37,6 +37,30 @@ In the final run, six fresh empty Galleries became usable on the first request i
 
 Mount a panel when the user submits a prompt, paint complete drawing sections during streaming, then activate input on the validated page. Generate secondary pages on first navigation, retain the previous page on a cancelled request, and persist completed features with the app. The delayed-stream desktop test checks the first paint before releasing the remaining response, request counts before and after navigation, and reuse after reopening. See [ADR 0005](adr/0005-progressive-pages.md).
 
+### Complex custom feature benchmark
+
+Run the paired desktop benchmark from the project directory with a running LM Studio server.
+
+```powershell
+$env:APPBOARD_BENCH_MODEL = 'google/gemma-4-e4b'
+.\.venv\Scripts\python.exe -B -m unittest tests.test_custom_features -v
+```
+
+Each trial starts with a fresh app and an isolated SQLite library. Timing starts at feature navigation. The benchmark records the first presented Qt frame with generated content, the time AppBoard activates the feature, and the number of model requests. The browser must accept a typed URL, load a loopback page in Chromium, follow a link, go back and go forward. The rock-core logger must preserve the order of three entries including a duplicate, then undo only the final entry. Both use the custom drawing path. A first-pass success requires all interactions and exactly one model request.
+
+The final three paired runs used LM Studio and `google/gemma-4-e4b` on Windows.
+
+| Generated feature | First drawing, all trials | Passed on first request | Active, successful trials | First site loaded |
+| --- | --- | --- | --- | --- |
+| Reference browser | 3.81–4.21 s | 3 of 3 | 8.57–9.75 s | 8.84–10.11 s |
+| Rock-core logger | 1.98–3.42 s | 1 of 3 | 14.02 s | — |
+
+One unsuccessful logger emitted invalid JavaScript and the other called an unavailable drawing method. Both failed the automatic correction. The successful logger appended Clay, Sand and Clay in order and removed just the last entry on Undo.
+
+On Windows with the running Gemma model and fast inference, two of three browsers passed in an initial paired run. The successful browsers first drew at 3.86 and 4.79 s, activated at 9.43 and 10.11 s, and finished the first local page load at 9.69 and 10.42 s. The third activated but omitted the requested address placeholder. The three loggers drew within 2.13–3.05 s and all failed validation on unsupported drawing methods. In three earlier logger trials with the same feature prompt, one passed on the first request in 22.49 s. In that earlier batch the Windows test process exited on Chromium startup when unittest discovery used the pattern flag. The same exit reproduced with a fixed browser fixture. Use the named-module command above to avoid the launcher issue.
+
+To compare provider defaults, set `APPBOARD_BENCH_PROVIDER_DEFAULT=1` for the benchmark. This omits the optional fast-inference override for that run. In three paired trials, one logger passed in 15.56 s. Two browsers drew toolbars without enabling Chromium. The third loaded the typed address in 15.35 s but the original test stopped at its decorated Back label, so its history behavior was unverified. First browser drawings took 11.46–16.83 s in this mode. The benchmark now accepts common address hints and arrow decorations, and still checks the resulting page after each action.
+
 ### Native 2D authoring and model discovery · implemented
 
 New projects use version 2 drawing scripts. The runtime maps their primitives to native Qt Quick items. Version 1 documents keep their reader and renderer. Studio discovers provider-qualified model IDs and runs a valid generated native app as soon as the model completes its response. Coverage includes native pixels and input, save/reopen, resource limits, browser toolbar revisions, multi-provider routing and a live LM Studio generation test. See [ADR 0004](adr/0004-native-drawing.md).

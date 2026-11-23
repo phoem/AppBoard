@@ -62,9 +62,22 @@ or use "" for text lists. emptyText is a short message when the collection is em
 Example: {"name":"Roster","collection":"members","labelField":"name","imageField":"","emptyText":"No members yet."}
 Use the requested names. The host handles layout, scrolling and native rendering."""
 
-FEATURE_EXAMPLE = """Draw the requested destination itself. Use executable JS sections that share one
-draw(g,w,h) body and implement the requested input(e,g,w,h) behavior. Use w and h for dimensions.
-{"name":"Switch","sections":["g.clear('white');","g.text(16,12,g.data.on?'On':'Off',22);"],"browser":false,"toolbarHeight":80,"input":"if(e.type==='down')g.data.on=!g.data.on;"}"""
+FEATURE_INSTRUCTIONS = """Write the requested page as short runnable JS fragments in one draw(g,w,h).
+w,h are surface dimensions, g.data persists between events. Render output with g.text(x,y,value,size=16,color).
+Actions belong directly inside draw: if(g.button(x,y,w,h,label,color)) { /* action */ }
+For typing: const f=g.textField(x,y,w,h,key,placeholder); if(f.submitted) { /* use f.value */ }
+Buttons and fields handle their own events. Use input:"" for these. For custom gestures only, input
+can contain the separate input(e,g,w,h) body: e.type down/up/move/key/wheel, x,y,key,text,delta.
+Drawing calls: g.clear(color), g.rect(x,y,w,h,color,radius=0), g.circle(cx,cy,r,color),
+g.line(x1,y1,x2,y2,color,thickness), g.path(svgPath,fill,stroke,thickness), g.image(x,y,w,h,png), g.animate().
+g.openFeature(id,brief) opens another AppBoard page. JavaScript math and arrays work normally.
+For websites use browser:true: fit everything on one toolbar row inside toolbarHeight. Chromium shows
+the site. Use if(f.submitted) g.browser.navigate(f.value); and if(g.button(...)) g.browser.back();
+or g.browser.forward(). g.browser.reload(), url and title are available.
+Example of a complete custom feature. Match the user's requested labels and behavior:
+{"name":"Labels","sections":["g.clear('white'); g.text(8,8,'Labels',18);","const f=g.textField(8,40,w-150,32,'entry','Name'); if(f.submitted) g.data.label=f.value;","if(g.button(w-130,40,120,32,'Reset','teal')) g.data.label='';","g.text(8,88,g.data.label||'');"],"browser":false,"toolbarHeight":80,"input":""}
+Keep each section short. For revisions, preserve other behavior and styling. Use the same direct
+if(g.button(...)) pattern for ordinary buttons."""
 
 
 def parse_response(raw):
@@ -167,9 +180,7 @@ Use concise code. Available primitives:
             collection_key = keys[0] if len(keys) == 1 else context["page"]
             system_prompt = COLLECTION_INSTRUCTIONS
         elif feature:
-            system_prompt = (FEATURE_EXAMPLE + "\nReturn the feature name and sections first. Available API:\n" + DRAWING_API +
-                             "\ng.data is shared JSON state. g.featureButton(x,y,w,h,label,id,brief,color) draws "
-                             "and handles navigation to a different feature. The host supplies Back.")
+            system_prompt = FEATURE_INSTRUCTIONS
         else:
             system_prompt = HOME_EXAMPLE + "\nEach section runs in its own block inside draw(g,w,h).\n" + instructions + DRAWING_API
         body = {"model": self.model, "temperature": 0.2, "messages": [{"role": "system", "content": system_prompt},
