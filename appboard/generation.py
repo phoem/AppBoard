@@ -32,8 +32,10 @@ For other apps use browser false and toolbarHeight 80. Preserve unrelated behavi
 DRAWING_INSTRUCTIONS = """Create a working native 2D AppBoard app. Return version 2, name, script, browser, toolbarHeight.
 script is plain JavaScript. Implement function draw(g,w,h) and optionally function input(e,g,w,h).
 App-level variables persist until close or source reload. Render the full scene on each draw.
-For example, a status display can keep let label='Ready'; draw text with g.text(8,8,label);
-and update label inside function input(e,g,w,h){if(e.type==='down')label='Selected';}.
+For example, a status display can keep let label='Ready';
+function draw(g,w,h){g.clear('white');g.text(8,8,label,16,'black');}
+function input(e,g,w,h){if(e.type==='down')label='Selected';}
+The fourth argument of g.text is numeric font size; the fifth is color.
 Use the requested interaction and exact text format. The host redraws automatically after input.
 """ + DRAWING_API
 
@@ -64,6 +66,7 @@ class Generator(QObject):
     failed = Signal(str)
     choices = Signal(list)
     preview = Signal(str)
+    partialPreview = Signal(str)
     pageTitle = Signal(str)
 
     def __init__(self, parent=None, base=None, model=None):
@@ -73,6 +76,8 @@ class Generator(QObject):
         self.base = (base or self.configured_base).rstrip("/")
         self.model = model if model is not None else os.getenv("APPBOARD_MODEL", "")
         self.reply = None
+        self.fast_model = None
+        self.can_skip_reasoning = False
 
     def cancel(self):
         if self.reply is not None:
@@ -125,9 +130,13 @@ class Generator(QObject):
 
     def generate_page(self, context):
         self.cancel()
-        instructions = """Write one AppBoard native page as JSON. Follow this executable example:
-{"name":"Sketchbook","browser":false,"toolbarHeight":80,"sections":["g.clear('white'); g.text(16,12,'Sketchbook',22,'black');","g.featureButton(16,52,140,40,'Gallery','gallery','Show saved sketches','teal');"],"input":""}
-Start with a short heading section. Each string runs as statements inside draw(g,w,h) in its own block.
+        instructions = """Write one working native page for the user's request. Output its name and drawing sections first.
+Example of the exact JSON shape and runnable JavaScript:
+{"name":"Atlas","sections":["g.clear('white'); g.text(16,12,'Atlas',22);","g.featureButton(16,52,140,40,'Places','places','List places','teal');"],"browser":false,"toolbarHeight":80,"input":""}
+Choose the name, heading, controls and content from the request. Put a short heading in the first section
+and the first useful control in the next. Every sections entry contains executable JS statements.
+Keep sections short and terminate drawing calls with semicolons.
+Each string runs as statements inside draw(g,w,h) in its own block.
 g IS the drawing API. Call its methods directly. g.ctx, fillStyle, canvas, DOM and function wrappers do not work.
 Use g.featureButton(x,y,width,height,label,id,brief,color) for navigation. It draws and handles clicks.
 Feature IDs start with a lowercase letter and use lowercase letters, digits, hyphens or underscores.
@@ -136,15 +145,48 @@ Implement only the requested page. Back is supplied. For other controls, input i
 Keep shared state in g.data. Show an empty state for empty collections. Add sample records only if requested.
 Use concise code. Available primitives:
 """
-        stream = PageStream(self.preview.emit, self.pageTitle.emit)
         body = {"model": self.model, "temperature": 0.2, "messages": [{"role": "system", "content": instructions + DRAWING_API},
                 {"role": "user", "content": json.dumps(context)}], "stream": True,
                 "response_format": {"type": "json_schema", "json_schema": {
                     "name": "appboard_page", "strict": True, "schema": PAGE_SCHEMA}}}
-        self._request("chat/completions", body, lambda _: self.generated.emit(stream.finish()), stream=stream)
+        def submit(fast=False):
+            stream = PageStream(self.preview.emit, self.pageTitle.emit, self.partialPreview.emit)
+            payload = {**body, "reasoning_effort": "none"} if fast else body
 
-    def _request(self, route, body, consume, timeout=120_000, stream=None):
-        url = QUrl(self.base + "/" + route)
+            def rejected(status, message):
+                if fast and status in (400, 422) and not stream.received:
+                    self.can_skip_reasoning = False
+                    submit()
+                else:
+                    self.failed.emit(message)
+
+            self._request("chat/completions", payload, lambda _: self.generated.emit(stream.finish()),
+                          stream=stream, on_error=rejected)
+
+        url = QUrl(self.base)
+        if ("correction" in context or url.host() not in {"localhost", "127.0.0.1", "::1"} or
+                url.port() != 1234 or url.path().rstrip("/") != "/v1"):
+            submit()
+            return
+        identity = (self.base, self.model)
+        if self.fast_model == identity:
+            submit(self.can_skip_reasoning)
+            return
+
+        def capabilities(raw):
+            catalog = json.loads(raw)
+            self.can_skip_reasoning = any(
+                item.get("key") == self.model and
+                "off" in item.get("capabilities", {}).get("reasoning", {}).get("allowed_options", [])
+                for item in catalog.get("models", []) if isinstance(item, dict))
+            self.fast_model = identity
+            submit(self.can_skip_reasoning)
+
+        self._request("/api/v1/models", None, capabilities, timeout=750,
+                      on_error=lambda status, message: submit())
+
+    def _request(self, route, body, consume, timeout=120_000, stream=None, on_error=None):
+        url = QUrl(self.base + "/").resolved(QUrl(route))
         if not url.host() or url.userInfo() or (url.scheme() != "https" and
                 (url.scheme() != "http" or url.host() not in {"localhost", "127.0.0.1", "::1"})):
             self.failed.emit("Use a local HTTP or remote HTTPS model endpoint in APPBOARD_MODEL_URL.")
@@ -191,6 +233,9 @@ Use concise code. Available primitives:
                     raise ValueError(f"Model request failed ({reply.errorString()}). Check your model server and APPBOARD_MODEL_URL.")
                 consume(bytes(reply.readAll()))
             except (ValueError, TypeError, KeyError, AttributeError, IndexError) as exc:
-                self.failed.emit(str(exc))
+                if on_error:
+                    on_error(reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute), str(exc))
+                else:
+                    self.failed.emit(str(exc))
 
         reply.finished.connect(finished)

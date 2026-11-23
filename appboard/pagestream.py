@@ -7,12 +7,12 @@ PAGE_SCHEMA = {
     "type": "object",
     "properties": {
         "name": {"type": "string"},
+        "sections": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 32},
         "browser": {"type": "boolean"},
         "toolbarHeight": {"type": "integer", "minimum": 32, "maximum": 400},
-        "sections": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 32},
         "input": {"type": "string"},
     },
-    "required": ["name", "browser", "toolbarHeight", "sections", "input"],
+    "required": ["name", "sections", "browser", "toolbarHeight", "input"],
     "additionalProperties": False,
 }
 
@@ -34,6 +34,7 @@ class SectionReader:
         self.in_sections = False
         self.sections = []
         self.name = None
+        self.statement_end = 0
 
     def append(self, text):
         for char in text:
@@ -55,6 +56,9 @@ class SectionReader:
                         self.key = value
                     self.token = None
                     self.previous = '"'
+                    self.statement_end = 0
+                elif char == ";" and self.in_sections and self.depth == 2 and len(self.token) <= 4096:
+                    self.statement_end = len(self.token)
                 continue
             if char.isspace():
                 continue
@@ -73,9 +77,11 @@ class SectionReader:
 
 
 class PageStream:
-    def __init__(self, preview, title=None):
+    def __init__(self, preview, title=None, partial=None):
         self.preview = preview
         self.title = title
+        self.partial = partial
+        self.partial_count = 0
         self.pending = bytearray()
         self.lines = []
         self.parts = []
@@ -90,6 +96,7 @@ class PageStream:
             raise ValueError("Model stream exceeded its transport limit.")
         self.pending.extend(chunk)
         before = len(self.reader.sections)
+        prior_end = self.reader.statement_end
         previous_name = self.reader.name
         lines = self.pending.split(b"\n")
         self.pending = lines.pop()
@@ -100,6 +107,13 @@ class PageStream:
             self.title(self.reader.name)
         if len(self.reader.sections) > before:
             self.preview(page_script(self.reader.sections))
+        elif (self.partial and self.reader.statement_end > prior_end and self.partial_count < 32):
+            # Try a bounded prefix only in a disposable preview VM. A semicolon
+            # can occur in a JS literal or an unfinished block, so failure is normal.
+            raw = "".join(self.reader.token[:self.reader.statement_end]) + '"'
+            section = json.loads(raw)
+            self.partial_count += 1
+            self.partial(page_script([*self.reader.sections, section]))
 
     def line(self, line):
         if line.startswith(b"data:"):

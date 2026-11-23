@@ -25,6 +25,10 @@ Live testing with LM Studio exposed native pages that used a browser canvas API,
 
 ### Progressive rendering and lazy feature generation · implemented
 
+The first-paint regression test holds back all model bytes for both the main page and first feature and inspects actual window pixels. It then delivers an unfinished drawing section and verifies the model's pixels while the response is still paused. Measure local first paint, first model-drawn content and time to usable controls separately.
+
+Two Windows runs with LM Studio and `google/gemma-4-e4b` used the same field-notebook prompt and clicked Gallery. The observed local layout appeared in 0.39–0.47 s for the first panel and 0.02–0.03 s for Gallery. The first model drawing arrived in 1.61–1.94 s and 0.88 s, respectively. The home page was usable in 2.43–2.76 s. Gallery took 1.68 s on its first attempt in one run and 12.25 s with an automatic correction in the other. These are sample timings from a running local server.
+
 Mount a panel when the user submits a prompt, paint complete drawing sections during streaming, then activate input on the validated page. Generate secondary pages on first navigation, retain the previous page on a cancelled request, and persist completed features with the app. The delayed-stream desktop test checks the first paint before releasing the remaining response, request counts before and after navigation, and reuse after reopening. See [ADR 0005](adr/0005-progressive-pages.md).
 
 ### Native 2D authoring and model discovery · implemented

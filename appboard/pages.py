@@ -22,6 +22,7 @@ class Pages(QObject):
         self.client.base = os.getenv("APPBOARD_MODEL_URL") or settings.value("generation/endpoint", self.client.base)
         self.client.model = os.getenv("APPBOARD_MODEL") or settings.value("generation/model", "")
         self.client.preview.connect(self.preview)
+        self.client.partialPreview.connect(lambda script: self.preview(script, provisional=True))
         self.client.pageTitle.connect(self.show_title)
         self.client.generated.connect(self.finish)
         self.client.failed.connect(self.fail)
@@ -33,6 +34,7 @@ class Pages(QObject):
         self.previous = None
         self.message = ""
         self.home_ready = True
+        self.preview_heading = ""
         self.context = None
 
     @property
@@ -84,6 +86,9 @@ class Pages(QObject):
         self.retry_job = None
         self.previous = self.surface.drawing
         self.surface.stop()
+        if not revision:
+            heading = key.replace("_", " ").replace("-", " ").capitalize() if key else request
+            self.preview_heading = " ".join(heading.split())[:140]
         self.message = f"Waiting for {self.client.model}…"
         root = self.root
         context = {"page": key or "main", "request": request, "viewport": list(self.surface.size)}
@@ -95,7 +100,8 @@ class Pages(QObject):
             context["currentPage"] = asdict(draft or self.page)
         elif key:
             context["fromPage"] = self.page.name
-            context["task"] = "Implement the requested feature here, including its contents and behavior."
+            context["task"] = ("Implement the requested feature here. Draw its contents or its empty state "
+                               "on this page; a link to another page is insufficient.")
             context["appName"] = root.name
             context["palette"] = list(dict.fromkeys(n["color"] for n in self.surface.nodes if "color" in n))[:8]
         # Runtime values stay local. The model can reuse the shape of shared state.
@@ -108,24 +114,29 @@ class Pages(QObject):
     def show_title(self, name):
         if self.job:
             self.message = f"Drawing {name}…"
-            width, height = self.surface.size
-            self.surface.nodes = [{"kind": "rect", "x": 0, "y": 0, "w": width, "h": height,
-                                   "color": "#ffffff", "radius": 0},
-                                  {"kind": "text", "x": 16, "y": 14, "value": name,
-                                   "size": 22, "color": "#26352c"}]
-            self.surface.frameChanged.emit()
+            if self.preview_heading:
+                self.preview_heading = name
             self.update()
 
-    def preview(self, script):
+    def preview(self, script, provisional=False):
         if not self.job:
             return
         try:
             frame = Drawing(script).frame(*self.surface.size, browser=self.session.port.state, data=self.surface.data)
         except DRAW_ERRORS as exc:
-            self.correct(script, exc)
+            if not provisional:
+                self.correct(script, exc)
             return
         if not frame["nodes"]:
             return
+        if self.preview_heading:
+            # Retain the heading until the model has drawn more than a flat background.
+            first = frame["nodes"][0]
+            background_only = (len(frame["nodes"]) == 1 and first["kind"] == "rect" and
+                               (first["x"], first["y"], first["w"], first["h"]) == (0, 0, *self.surface.size))
+            if not background_only:
+                self.preview_heading = ""
+                self.update()
         self.surface.nodes = frame["nodes"]
         self.surface.frameChanged.emit()
 
@@ -181,6 +192,7 @@ class Pages(QObject):
         if key != self.key and not revision:
             self.history.append((self.key, self.previous))
         self.key, self.job, self.previous = key, None, None
+        self.preview_heading = ""
         self.context = None
         self.home_ready = True
         self.message = ""
@@ -189,6 +201,7 @@ class Pages(QObject):
         self.surface.load(page.script)
 
     def restore(self):
+        self.preview_heading = ""
         self.surface.drawing, self.previous = self.previous, None
         self.job = None
         self.context = None

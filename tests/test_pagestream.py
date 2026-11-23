@@ -12,6 +12,18 @@ def event(text):
 
 
 class PageStreamTests(unittest.TestCase):
+    def test_provisional_prefix_paints_before_json_string_closes(self):
+        partial, complete = [], []
+        stream = PageStream(complete.append, partial=partial.append)
+        section = "g.text(4,4,'Requested title');"
+        stream.feed(event('{"name":"Test","sections":[' + json.dumps(section)[:-1]))
+        self.assertIn(section, partial[0])
+        self.assertFalse(complete)
+        stream.feed(event('g.rect(2,2,8,8,\\"red\\");"],"browser":false,"toolbarHeight":80,"input":""}'))
+        stream.feed(b"data: [DONE]\n\n")
+        self.assertEqual(len(complete), 1)
+        self.assertEqual(complete[0], stream.finish().script)
+
     def test_title_arrives_before_first_drawing_section(self):
         titles, previews = [], []
         stream = PageStream(previews.append, titles.append)

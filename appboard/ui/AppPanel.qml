@@ -86,6 +86,27 @@ Rectangle {
         width: parent.width - 2
         height: parent.height - y - 10
         clip: true
+        Rectangle {
+            id: preview
+            objectName: "generationPreview"
+            anchors.fill: parent
+            z: 2
+            visible: Boolean(panel.session.previewHeading)
+            color: "#f4f7f4"
+            Column {
+                x: 22; y: 20; width: Math.max(0, parent.width - 44); spacing: 12
+                Text {
+                    width: parent.width
+                    text: panel.session.previewHeading
+                    textFormat: Text.PlainText
+                    maximumLineCount: 2; wrapMode: Text.WordWrap; elide: Text.ElideRight
+                    color: "#26372e"; font.pixelSize: 21; font.weight: Font.DemiBold
+                }
+                Rectangle { width: parent.width * 0.60; height: 8; radius: 4; color: "#d9e2db" }
+                Rectangle { width: parent.width * 0.38; height: 8; radius: 4; color: "#d9e2db" }
+            }
+            MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
+        }
         Loader {
             id: appSurface
             width: parent.width

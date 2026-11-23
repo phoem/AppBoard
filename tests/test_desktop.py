@@ -304,6 +304,8 @@ class DesktopTests(unittest.TestCase):
 
     def test_picker_routes_generation_and_runs_native_browser_immediately(self):
         calls = []
+        allow_home_tokens = threading.Event()
+        allow_feature_tokens = threading.Event()
         release_home = threading.Event()
         class Server(BaseHTTPRequestHandler):
             def log_message(self, *args):
@@ -344,11 +346,12 @@ class DesktopTests(unittest.TestCase):
                 if not home:
                     first, second = "g.clear('white');", "g.text(5,5,'Open');"
                     handler = "if(e.type==='down')g.browser.navigate('" + base + "/page');"
+                (allow_home_tokens if home else allow_feature_tokens).wait(8)
                 delta('{"name":"Library","browser":' + json.dumps(not home) +
-                      ',"toolbarHeight":80,"sections":[' + json.dumps(first))
+                      ',"toolbarHeight":80,"sections":[' + json.dumps(first)[:-1])
                 if home:
                     release_home.wait(8)
-                delta(',' + json.dumps(second) + '],"input":' + json.dumps(handler) + '}')
+                delta('",' + json.dumps(second) + '],"input":' + json.dumps(handler) + '}')
                 self.wfile.write(b"data: [DONE]\n\n")
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Server)
@@ -388,14 +391,17 @@ class DesktopTests(unittest.TestCase):
                 timer.stop()
         self.assertCountEqual(picker_items, [(a, "shared"), (b, "shared")])
         session = self.board.sessions[0]
-        self.wait(lambda: any(n.get("value") == "Library" for n in session.surface.nodes))
         live_view = self.window.findChild(QObject, "nativeSurface")
         point = live_view.mapToScene(QPointF(200, 30)).toPoint()
-        def first_paint():
+        def paint_color():
             image = self.window.grabWindow()
             scale = image.devicePixelRatio()
-            return image.pixelColor(round(point.x()*scale), round(point.y()*scale)).name() == "#176840"
-        self.wait(first_paint)
+            return image.pixelColor(round(point.x()*scale), round(point.y()*scale)).name()
+        self.assertIn("browser", session.previewHeading)
+        self.wait(lambda: paint_color() == "#f4f7f4")
+        allow_home_tokens.set()
+        self.wait(lambda: any(n.get("value") == "Library" for n in session.surface.nodes))
+        self.wait(lambda: paint_color() == "#176840")
         self.assertTrue(session.building)
         self.assertFalse(session.canSave)
         self.assertEqual(session.project.features, {})
@@ -413,6 +419,9 @@ class DesktopTests(unittest.TestCase):
             QTest.mouseClick(self.window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
                              surface.mapToScene(QPointF(15,15)).toPoint())
         click()
+        self.assertEqual(session.previewHeading, "Browser")
+        self.wait(lambda: paint_color() == "#f4f7f4")
+        allow_feature_tokens.set()
         self.wait(lambda: session.pages.key == "browser")
         self.assertEqual(len(calls), 2)
         self.assertEqual(session.surface.data["visits"], 1)
@@ -441,6 +450,26 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(Project.load(path), session.project)
 
+    def test_fast_inference_is_scoped_to_local_capabilities_with_fallback(self):
+        client = Generator(base="http://127.0.0.1:1234/v1", model="local")
+        context = {"request": "Show the time"}
+        with patch.object(client, "_request") as request:
+            client.generate_page(context)
+            route, _, receive = request.call_args.args
+            self.assertEqual(route, "/api/v1/models")
+            receive(b'{"models":[{"key":"local","capabilities":{"reasoning":{"allowed_options":["off","on"]}}}]}')
+            self.assertEqual(request.call_args.args[1]["reasoning_effort"], "none")
+            request.call_args.kwargs["on_error"](400, "Unsupported option")
+            self.assertNotIn("reasoning_effort", request.call_args.args[1])
+            request.reset_mock()
+            client.generate_page(context)
+            self.assertEqual(request.call_count, 1)
+            self.assertNotIn("reasoning_effort", request.call_args.args[1])
+            client.base = "https://example.org/v1"
+            client.generate_page(context)
+            self.assertEqual(request.call_args.args[0], "chat/completions")
+            self.assertNotIn("reasoning_effort", request.call_args.args[1])
+
     def test_invalid_native_generation_stays_editable(self):
         editor = Editor(DrawingProject())
         editor.settings = Mock()
@@ -457,6 +486,9 @@ class DesktopTests(unittest.TestCase):
         with patch.object(flow.client, "generate_page") as generate:
             flow.start("", "Field notebook", draft=DrawingProject())
             self.assertEqual(set(generate.call_args.args[0]), {"request", "page", "viewport"})
+            flow.client.partialPreview.emit("function draw(g){ if (true) {g.clear('red');")
+            self.assertEqual(generate.call_count, 1)
+            self.assertTrue(session.previewHeading)
             flow.preview("function draw(g){g.ctx.fillStyle='red'}")
             self.assertEqual(generate.call_count, 2)
             self.assertIn("fillStyle", generate.call_args.args[0]["correction"]["error"])

@@ -17,7 +17,7 @@ If you installed the original HTML runtime, rerun the pip install command above 
 ## Create, edit and reopen an app
 
 1. Select **New app** or press **Ctrl+N**. Enter a prompt such as “Draw a constellation editor. Let me click to add stars and connect consecutive stars with lines.”
-2. Pick a model and select **Generate and run**. The panel opens immediately. Its heading, layout and controls appear as the model finishes drawing sections. The controls become interactive when the main page is complete.
+2. Pick a model and select **Generate and run**. A native preview shows your request while the model starts. The model's heading and drawing commands appear as they arrive, including within an unfinished section. Controls become interactive when the complete page passes validation.
    Try “Build a sketchbook with a drawing page and a gallery.” Opening **Gallery** for the first time asks the model to draw that feature. **Back** returns to the previous page. Subsequent visits reuse the generated page.
 3. You can also write a drawing script and select **Run app**. Drag the panel by its title bar or resize it from the bottom-right corner.
 4. Select **Edit** to change the visible page or request a streamed revision. **Stop** cancels a build and **Retry** repeats it. Applying a revision restarts that page's script.
