@@ -61,6 +61,23 @@ On Windows with the running Gemma model and fast inference, two of three browser
 
 To compare provider defaults, set `APPBOARD_BENCH_PROVIDER_DEFAULT=1` for the benchmark. This omits the optional fast-inference override for that run. In three paired trials, one logger passed in 15.56 s. Two browsers drew toolbars without enabling Chromium. The third loaded the typed address in 15.35 s but the original test stopped at its decorated Back label, so its history behavior was unverified. First browser drawings took 11.46–16.83 s in this mode. The benchmark now accepts common address hints and arrow decorations, and still checks the resulting page after each action.
 
+### Ordered edits and new feature checks
+
+The previous logger benchmark passed once in three trials. The two rejected programs had a JavaScript syntax error and a call to an unavailable drawing method. Earlier outputs also duplicated a press or cleared every entry during Undo. Ordered-list briefs now have a structured choice alongside custom drawing code. The host compiles each requested operation and the model provides the labels, entry values and separator. See [ADR 0005](adr/0005-progressive-pages.md).
+
+Three fresh paired desktop trials used the same local Gemma model and original logger prompt. All timings start at feature navigation and include validation.
+
+| Feature | First drawing | Ready | One-response behavioral passes |
+| --- | --- | --- | --- |
+| Rock-core logger | 2.38–2.46 s | 2.47–2.56 s | 3/3 preserved Clay, Sand, Clay and removed only the last Clay |
+| Dispatch queue | 2.60–2.88 s | 2.70–3.02 s | 3/3 preserved duplicate arrivals, served the oldest and reset before accepting new arrivals |
+
+The queue's first exploratory build missed the requested display format. A replay produced an empty separator and renamed controls. The final generator constrains explicit quoted delimiters and unambiguous action labels in its response schema. Exploratory runs also exposed a separate problem in free-form drawings. The model sometimes returned an anonymous event function where the host expected its body. New feature scripts can now call that function in the existing sandbox. A survey caliper failed on its first-ever build and later passed in one request at 12.55 s, drawing the tested line and displaying its 50-pixel length.
+
+A mirror-stamp sketchpad needed a correction on its first build. In a later one-response run it retained all four original and reflected marks after two clicks and was ready in 7.40 s. Blank sketchpads receive clicks during the benchmark even if they begin with no visible marks.
+
+The held-out signal pad used append values different from its button labels. The first build activated in 3.40 s with one response, but the test stopped before clicking because it expected “Dash” and the model drew “Dash (-)”. After allowing that visible label in the test, a fresh generation passed with one response. It first drew at 3.13 s and was ready at 3.21 s. Real clicks encoded `-.-`, erased the last symbol, reset the sequence and entered a new dot. The original build’s behavior was unverified.
+
 ### Native 2D authoring and model discovery · implemented
 
 New projects use version 2 drawing scripts. The runtime maps their primitives to native Qt Quick items. Version 1 documents keep their reader and renderer. Studio discovers provider-qualified model IDs and runs a valid generated native app as soon as the model completes its response. Coverage includes native pixels and input, save/reopen, resource limits, browser toolbar revisions, multi-provider routing and a live LM Studio generation test. See [ADR 0004](adr/0004-native-drawing.md).

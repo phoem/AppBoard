@@ -1,6 +1,7 @@
 """Opt-in desktop benchmark. Set APPBOARD_BENCH_MODEL to a local model identifier."""
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -69,7 +70,7 @@ class CustomFeatureTests(unittest.TestCase):
     def elapsed(self):
         return round(time.perf_counter() - self.start, 3)
 
-    def generate(self, key, brief):
+    def generate(self, key, brief, *, blank_canvas=False):
         flow = self.session.pages
         original_request = flow.client._request
         provider_defaults = os.getenv("APPBOARD_BENCH_PROVIDER_DEFAULT") == "1"
@@ -91,11 +92,16 @@ class CustomFeatureTests(unittest.TestCase):
                 flow.open(key, brief)
                 self.wait_for(lambda: not self.session.building, 250)
                 self.metrics["ready_s"] = self.elapsed() if flow.key == key else None
-                self.metrics["model_requests"] = sum(c.args[0] == "chat/completions" for c in requests.call_args_list)
+                completions = [c for c in requests.call_args_list if c.args[0] == "chat/completions"]
+                self.metrics["model_requests"] = len(completions)
+                if completions:
+                    reader = completions[-1].kwargs["stream"].reader
+                    self.metrics["format"] = "ordered list" if reader.panel is not None else "drawing code"
                 if self.session.lastCorrection:
                     self.metrics["correction"] = self.session.lastCorrection
                 self.assertEqual(flow.key, key, self.session.pageStatus)
-                self.wait_for(lambda: "first_frame_s" in self.metrics)
+                if not blank_canvas:
+                    self.wait_for(lambda: "first_frame_s" in self.metrics)
         finally:
             self.window.frameSwapped.disconnect(frame_drawn)
         self.surface = self.window.findChild(QObject, "nativeSurface")
@@ -157,4 +163,66 @@ class CustomFeatureTests(unittest.TestCase):
         self.click_label("Undo")
         self.assertTrue(any(n["value"].casefold().endswith("clay / sand") for n in self.labels()), self.labels())
         self.metrics["sequence_and_undo_verified"] = True
+        self.assertEqual(self.metrics["model_requests"], 1, self.metrics)
+
+    def test_dispatch_queue(self):
+        self.generate("dispatch", "Make a dispatch queue. Walk-in and Pickup buttons each add their label "
+                      "to the end of the waiting list. Show everyone in order separated by ' | '. "
+                      "Call next removes the oldest entry. Clear empties the queue.")
+        for label in ("Pickup", "Walk-in", "Walk-in"):
+            self.click_label(label)
+        def queue_lines():
+            return [n["value"].casefold() for n in self.labels() if " | " in n["value"]]
+        self.assertEqual(queue_lines(), ["pickup | walk-in | walk-in"], self.labels())
+        self.click_label("Call next")
+        self.assertEqual(queue_lines(), ["walk-in | walk-in"])
+        self.click_label("Clear")
+        self.assertEqual(queue_lines(), [])
+        self.click_label("Pickup")
+        self.click_label("Pickup")
+        self.assertEqual(queue_lines(), ["pickup | pickup"])
+        self.metrics["fifo_and_reset_verified"] = True
+        self.assertEqual(self.metrics["model_requests"], 1, self.metrics)
+
+    def test_survey_caliper(self):
+        self.generate("caliper", "Make a survey caliper. I click any two points on the drawing surface. "
+                      "Mark both points, draw a line between them and show their straight-line distance "
+                      "in pixels as a number. The points are chosen by me each time.", blank_canvas=True)
+        self.click(self.surface, 100, 100)
+        self.click(self.surface, 130, 140)
+        self.assertTrue(any(re.search(r"\b50(?:\.0+)?\b", n["value"]) for n in self.labels()), self.labels())
+        paths = [[float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", n["d"])]
+                 for n in self.session.surface.nodes if n["kind"] == "path"]
+        self.assertTrue([100, 100, 130, 140] in paths or [130, 140, 100, 100] in paths, paths)
+        self.metrics["distance_and_line_verified"] = True
+        self.assertEqual(self.metrics["model_requests"], 1, self.metrics)
+
+    def test_mirror_stamp(self):
+        self.generate("symmetry", "Make a mirror-stamp sketchpad. Each click on the drawing surface places "
+                      "a small round dot at that point and another at its horizontal reflection across the "
+                      "vertical centerline. Keep previous pairs visible.", blank_canvas=True)
+        width = self.session.surface.size[0]
+        for x, y in [(82, 93), (141, 151)]:
+            self.click(self.surface, x, y)
+        centers = {(round(n["x"] + n["w"]/2), round(n["y"] + n["h"]/2)) for n in self.session.surface.nodes
+                   if n["kind"] == "rect" and n["radius"] > 0 and n["w"] == n["h"]}
+        self.assertTrue({(82, 93), (width-82, 93), (141, 151), (width-141, 151)} <= centers, centers)
+        self.metrics["four_reflected_marks_verified"] = True
+        self.assertEqual(self.metrics["model_requests"], 1, self.metrics)
+
+    def test_signal_pad(self):
+        self.generate("signal", "Create a flag signal encoder. Dot appends '.' and Dash appends '-' to "
+                      "the sequence. Show the symbols joined by ''. Erase removes the last symbol. "
+                      "Reset clears the sequence.")
+        dash = ("Dash", "Dash (-)", "-")
+        dot = ("Dot", "Dot (.)", ".")
+        for labels in (dash, dot, dash):
+            self.click_label(*labels)
+        self.assertIn("-.-", [n["value"] for n in self.labels()])
+        self.click_label("Erase")
+        self.assertIn("-.", [n["value"] for n in self.labels()])
+        self.click_label("Reset")
+        self.click_label(*dot)
+        self.assertIn(".", [n["value"] for n in self.labels()])
+        self.metrics["encoding_erase_reset_verified"] = True
         self.assertEqual(self.metrics["model_requests"], 1, self.metrics)

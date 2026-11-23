@@ -470,6 +470,23 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(request.call_args.args[0], "chat/completions")
             self.assertNotIn("reasoning_effort", request.call_args.args[1])
 
+    def test_sequence_schema_rejection_retries_the_standard_page_format(self):
+        client = Generator(base="http://localhost:9876/v1", model="fixture")
+        errors = []
+        client.failed.connect(errors.append)
+        context = {"page": "setlist", "fromPage": "Home", "request": "Add cues to a list and undo the last"}
+        with patch.object(client, "_request") as request:
+            client.generate_page(context)
+            def properties():
+                return request.call_args.args[1]["response_format"]["json_schema"]["schema"]["properties"]
+            self.assertIn("anyOf", properties()["layout"])
+            request.call_args.kwargs["on_error"](422, "unsupported schema")
+            self.assertEqual(properties()["sections"]["type"], "array")
+            self.assertFalse(request.call_args.kwargs["stream"].allow_sequence)
+            request.call_args.kwargs["on_error"](422, "bad configuration")
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(errors, ["bad configuration"])
+
     def test_invalid_native_generation_stays_editable(self):
         editor = Editor(DrawingProject())
         editor.settings = Mock()

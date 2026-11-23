@@ -1,6 +1,7 @@
 """Asynchronous chat-completions client. Credentials stay in the desktop host."""
 import json
 import os
+import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -9,7 +10,8 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequ
 
 from .project import MAX_BYTES, Project
 from .collectionview import is_collection_request
-from .pagestream import COLLECTION_SCHEMA, PAGE_SCHEMA, PageStream
+from .pagestream import COLLECTION_SCHEMA, PAGE_SCHEMA, PageStream, action_page_schema
+from .sequence import sequence_candidate
 
 SCHEMA = json.loads((Path(__file__).with_name("assets") / "generation.schema.json").read_text(encoding="utf-8"))
 DRAWING_SCHEMA = {**SCHEMA, "properties": {
@@ -78,6 +80,28 @@ Example of a complete custom feature. Match the user's requested labels and beha
 {"name":"Labels","sections":["g.clear('white'); g.text(8,8,'Labels',18);","const f=g.textField(8,40,w-150,32,'entry','Name'); if(f.submitted) g.data.label=f.value;","if(g.button(w-130,40,120,32,'Reset','teal')) g.data.label='';","g.text(8,88,g.data.label||'');"],"browser":false,"toolbarHeight":80,"input":""}
 Keep each section short. For revisions, preserve other behavior and styling. Use the same direct
 if(g.button(...)) pattern for ordinary buttons."""
+
+SEQUENCE_INSTRUCTIONS = """Return the feature's name and layout. For a sequence edited by buttons, layout
+contains key (shared array name), separator, append, remove_last, remove_first and clear.
+The host draws every nonempty action label as a button and displays the entries in order with the exact separator.
+append contains the additive choices only. For remove_last give the exact label for undoing the most recent entry;
+remove_first is the label for taking the oldest entry; clear is the label for clearing all. Use "" for unrequested actions.
+Each append choice has a label and value. When a choice adds its own name, use that name for both.
+Copy the action names from the user's brief exactly. A field for an unrequested edit must be empty.
+If behavior or styling requires more than an ordered list, layout can contain sections, browser, toolbarHeight
+and input instead. Use ordinary JS sections inside draw(g,w,h)
+and the separate input(e,g,w,h) body. g.data stores state. Native primitives include g.text, g.rect,
+g.circle, g.line, g.button and g.textField."""
+
+POINTER_INSTRUCTIONS = """Implement the requested interactive drawing in short JS fragments. The host
+calls input(e,g,w,h) on events, then calls draw(g,w,h). Store coordinates in g.data across frames.
+Put all pointer event code in the input string. Use e.type==='down' for a click and e.x,e.y for position.
+For drags use move with e.buttons, and up on release. Use plain statements in input and in sections.
+Example of the entire response for a position probe:
+{"name":"Probe","sections":["g.clear('white'); g.text(8,8,'Probe');","if(g.data.mark) g.circle(g.data.mark.x,g.data.mark.y,4,'navy');"],"browser":false,"toolbarHeight":80,"input":"if(e.type==='down') g.data.mark={x:e.x,y:e.y};"}
+Draw with g.clear(color), g.text(x,y,value,size,color), g.circle(cx,cy,r,color), g.line(x1,y1,x2,y2,color,thickness),
+g.path(svgPath,fill,stroke,thickness) and g.rect(x,y,w,h,color). Standard Math and arrays work.
+Keep the JS concise. The host handles event registration and repainting. Preserve other behavior on edits."""
 
 
 def parse_response(raw):
@@ -162,6 +186,7 @@ class Generator(QObject):
         self.cancel()
         feature = context.get("pageKind") == "feature" or context.get("page", "main") != "main"
         collection = feature and is_collection_request(context)
+        sequence = feature and not collection and sequence_candidate(context)
         collection_key = None
         instructions = """Write one working native page for the user's request. Output its name and drawing sections first.
 Choose the name, heading and contents from the request. In drawing arrays each entry contains JS statements.
@@ -181,21 +206,34 @@ Use concise code. Available primitives:
             system_prompt = COLLECTION_INSTRUCTIONS
         elif feature:
             system_prompt = FEATURE_INSTRUCTIONS
+            brief = context["request"]
+            if ("fromPage" in context and not sequence and
+                    re.search(r"\b(?:click|tap|drag)\w*\b", brief, re.I) and
+                    re.search(r"\b(?:points?|coordinates?|drawing surface|canvas)\b", brief, re.I)):
+                system_prompt = POINTER_INSTRUCTIONS
         else:
             system_prompt = HOME_EXAMPLE + "\nEach section runs in its own block inside draw(g,w,h).\n" + instructions + DRAWING_API
-        body = {"model": self.model, "temperature": 0.2, "messages": [{"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(context)}], "stream": True,
-                "response_format": {"type": "json_schema", "json_schema": {
-                    "name": "appboard_page", "strict": True, "schema": COLLECTION_SCHEMA if collection else PAGE_SCHEMA}}}
-        def submit(fast=False):
+        def submit(fast=False, use_sequence=sequence):
             stream = PageStream(self.preview.emit, self.pageTitle.emit, self.partialPreview.emit,
-                                shared_scope=feature, collection_key=collection_key)
-            payload = {**body, "reasoning_effort": "none"} if fast else body
+                                shared_scope=feature, collection_key=collection_key, allow_sequence=use_sequence)
+            prompt = system_prompt
+            schema = COLLECTION_SCHEMA if collection else PAGE_SCHEMA
+            if use_sequence:
+                prompt = SEQUENCE_INSTRUCTIONS
+                schema = action_page_schema(context["request"])
+            payload = {"model": self.model, "temperature": 0.2, "stream": True,
+                       "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": json.dumps(context)}],
+                       "response_format": {"type": "json_schema", "json_schema": {
+                           "name": "appboard_page", "strict": True, "schema": schema}}}
+            if fast:
+                payload["reasoning_effort"] = "none"
 
             def rejected(status, message):
-                if fast and status in (400, 422) and not stream.received:
+                if use_sequence and status in (400, 422) and not stream.received:
+                    submit(fast, False)
+                elif fast and status in (400, 422) and not stream.received:
                     self.can_skip_reasoning = False
-                    submit()
+                    submit(False, use_sequence)
                 else:
                     self.failed.emit(message)
 
