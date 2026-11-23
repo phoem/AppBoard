@@ -49,6 +49,8 @@ function draw(g, w, h) {
 | --- | --- |
 | `g.clear(color)` | Discard earlier drawing operations and fill the panel. |
 | `g.rect(x,y,w,h,color,radius=0)` | Filled rectangle with optional rounded corners. |
+| `g.button(x,y,w,h,label,color)` | Draws a labeled button and returns true on pointer down inside it. Color is optional. |
+| `g.textField(x,y,w,h,key,placeholder)` | Draws a single-line field. Clicking focuses it. Its return value has the current `value` and a `submitted` flag for Enter. The field edits `g.data[key]` and supports Backspace and Ctrl+A. |
 | `g.circle(cx,cy,radius,color)` | Filled circle around its center. |
 | `g.line(x1,y1,x2,y2,color,thickness=1)` | Stroked segment. |
 | `g.path(d,fill,stroke="transparent",thickness=1)` | Vector shape using SVG path-data syntax, including curves. |

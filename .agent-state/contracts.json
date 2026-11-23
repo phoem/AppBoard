@@ -40,7 +40,7 @@
       "status": "active",
       "owner": "orchestrator",
       "consumers": ["saved version 2 apps", "appboard/generation.py", "appboard/ui/NativeSurface.qml"],
-      "compatibility": "Keep version 1 readable and preserve version 2 draw/input signatures and primitive arguments.",
+      "compatibility": "Keep version 1 readable and preserve version 2 draw/input signatures and primitive arguments. The additive button and textField calls require a host that provides them.",
       "change_policy": "Review the file format, generator instructions, native renderer and saved examples together.",
       "verification": ["tests/test_native.py", "tests/test_desktop.py"],
       "rationale": "Generated and manually authored drawing scripts use these interfaces.",

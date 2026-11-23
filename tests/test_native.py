@@ -46,3 +46,44 @@ class NativeTests(unittest.TestCase):
                 Drawing(script).frame(40, 40)
         with self.assertRaises(ValueError):
             checked_frame('{"nodes":[{"kind":"unknown"}],"commands":[],"animate":false}')
+
+    def test_drawn_controls_share_hit_regions_and_handle_focused_text(self):
+        drawing = Drawing("""
+            function draw(g) {
+              if(g.button(0,0,80,30,'Add')) g.data.added = (g.data.added || 0) + 1;
+              const entry = g.textField(0,40,180,30,'term','Search');
+              g.textField(0,40,180,30,'term','Search');
+              if(entry.submitted) g.browser.navigate(entry.value);
+              g.textField(0,80,180,30,'other','Other');
+            }
+        """)
+        data = {}
+        def frame(event=None):
+            nonlocal data
+            result = drawing.frame(300, 150, event, data=data)
+            data = result["data"]
+            return result
+        def press(y):
+            return frame({"type": "down", "x": 8, "y": y})
+        def key(code, text="", modifiers=0):
+            return frame({"type": "key", "key": code, "text": text, "modifiers": modifiers})
+        self.assertIn("Search", [n.get("value") for n in frame()["nodes"]])
+        press(10)
+        frame({"type": "up", "x": 8, "y": 10})
+        frame()
+        self.assertEqual(data, {"added": 1})
+        press(48)
+        key(65, "a")
+        key(66, "b")
+        key(16777219)
+        self.assertEqual(data["term"], "a")
+        key(65, "a", 0x04000000)
+        key(67, "c")
+        self.assertEqual(key(16777220)["commands"], [["navigate", "c"]])
+        self.assertEqual(frame()["commands"], [])
+        press(88)
+        key(68, "d")
+        self.assertEqual((data["term"], data["other"]), ("c", "d"))
+        press(140)
+        key(69, "e")
+        self.assertEqual(data["other"], "d")
