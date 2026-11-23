@@ -1,8 +1,10 @@
 """Decode chat SSE and publish each complete drawing section exactly once."""
 import json
+import re
 
 from .project import MAX_BYTES, Project
 from .collectionview import COLLECTION_FIELDS, collection_script
+from .sequence import sequence_schema, sequence_script
 
 PAGE_SCHEMA = {
     "type": "object",
@@ -21,9 +23,20 @@ COLLECTION_SCHEMA = {"type": "object", "properties": {k: {"type": "string"} for 
                      "required": ["name", *COLLECTION_FIELDS], "additionalProperties": False}
 
 
+def action_page_schema(brief):
+    custom = {k: v for k, v in PAGE_SCHEMA["properties"].items() if k != "name"}
+    drawing = {"type": "object", "properties": custom, "required": list(custom), "additionalProperties": False}
+    return {"type": "object", "properties": {"name": {"type": "string"},
+            "layout": {"anyOf": [sequence_schema(brief), drawing]}},
+            "required": ["name", "layout"], "additionalProperties": False}
+
+
 def page_script(sections, handler="", *, shared_scope=False):
     body = ("\n".join(sections) if shared_scope else
             "\n".join("{\n" + section + "\n}" for section in sections if section.strip()))
+    if shared_scope and re.match(r"^\s*function\s*\(", handler):
+        # An anonymous function is an expression, never a standalone statement.
+        handler = "(" + handler.strip().removesuffix(";") + "\n)(e,g,w,h);"
     return "function draw(g,w,h) {\n" + body + "\n}\nfunction input(e,g,w,h) {\n" + handler + "\n}\n"
 
 
@@ -35,14 +48,20 @@ class SectionReader:
         self.escaped = False
         self.previous = ""
         self.key = None
-        self.in_sections = False
+        self.section_depth = None
         self.sections = []
         self.name = None
         self.statement_end = 0
         self.collection = {}
+        self.panel_buffer = None
+        self.panel = None
 
     def append(self, text):
         for char in text:
+            if self.panel_buffer is not None:
+                self.panel_buffer.append(char)
+            elif char == "{" and self.token is None and self.depth == 1 and self.key == "layout" and self.previous == ":":
+                self.panel_buffer = [char]
             if self.token is not None:
                 self.token.append(char)
                 if self.escaped:
@@ -51,7 +70,7 @@ class SectionReader:
                     self.escaped = True
                 elif char == '"':
                     value = json.loads("".join(self.token))
-                    if self.in_sections and self.depth == 2:
+                    if self.depth == self.section_depth:
                         if len(self.sections) == 32:
                             raise ValueError("Too many drawing sections.")
                         self.sections.append(value)
@@ -59,12 +78,12 @@ class SectionReader:
                         self.name = value
                     elif self.depth == 1 and self.key in COLLECTION_FIELDS and self.previous == ":":
                         self.collection[self.key] = value
-                    elif self.depth == 1 and self.previous in ("{", ","):
+                    elif (self.depth == 1 or (self.depth == 2 and self.panel_buffer is not None)) and self.previous in ("{", ","):
                         self.key = value
                     self.token = None
                     self.previous = '"'
                     self.statement_end = 0
-                elif char == ";" and self.in_sections and self.depth == 2 and len(self.token) <= 4096:
+                elif char == ";" and self.depth == self.section_depth and len(self.token) <= 4096:
                     self.statement_end = len(self.token)
                 continue
             if char.isspace():
@@ -73,24 +92,31 @@ class SectionReader:
                 self.token = ['"']
                 continue
             if char in "[{":
-                if self.depth == 1 and char == "[" and self.key == "sections" and self.previous == ":":
-                    self.in_sections = True
+                if char == "[" and self.key == "sections" and self.previous == ":" and (
+                        self.depth == 1 or (self.depth == 2 and self.panel_buffer is not None)):
+                    self.section_depth = self.depth + 1
                 self.depth += 1
             elif char in "]}":
-                if self.depth == 2:
-                    self.in_sections = False
+                if self.depth == self.section_depth:
+                    self.section_depth = None
                 self.depth -= 1
+                if self.depth == 1 and self.panel_buffer is not None:
+                    layout = json.loads("".join(self.panel_buffer))
+                    if "sections" not in layout:
+                        self.panel = layout
+                    self.panel_buffer = None
             self.previous = char
 
 
 class PageStream:
-    def __init__(self, preview, title=None, partial=None, *, shared_scope=False, collection_key=None):
+    def __init__(self, preview, title=None, partial=None, *, shared_scope=False, collection_key=None, allow_sequence=False):
         self.preview = preview
         self.title = title
         self.partial = partial
         self.partial_count = 0
         self.shared_scope = shared_scope
         self.collection_key = collection_key
+        self.allow_sequence = allow_sequence
         self.pending = bytearray()
         self.lines = []
         self.parts = []
@@ -108,6 +134,7 @@ class PageStream:
         previous_fields = len(self.reader.collection)
         prior_end = self.reader.statement_end
         previous_name = self.reader.name
+        previous_panel = self.reader.panel
         lines = self.pending.split(b"\n")
         self.pending = lines.pop()
         for line in lines:
@@ -117,6 +144,9 @@ class PageStream:
             self.title(self.reader.name)
         if len(self.reader.sections) > before:
             self.preview(page_script(self.reader.sections, shared_scope=self.shared_scope))
+        elif (self.allow_sequence and self.reader.name and self.reader.panel is not None and
+              (self.reader.panel is not previous_panel or self.reader.name != previous_name)):
+            self.preview(sequence_script(self.reader.name, self.reader.panel))
         elif (self.collection_key is not None and self.reader.name and
               len(self.reader.collection) == len(COLLECTION_FIELDS) and
               (previous_fields != len(COLLECTION_FIELDS) or self.reader.name != previous_name)):
@@ -163,6 +193,15 @@ class PageStream:
         if not self.complete:
             raise ValueError("The page stream was interrupted. Retry generation.")
         page = json.loads("".join(self.parts))
+        if self.allow_sequence and isinstance(page, dict) and set(page) == {"name", "layout"}:
+            layout = page["layout"]
+            if not isinstance(layout, dict):
+                raise ValueError("Invalid feature layout.")
+            if "sections" not in layout:
+                return Project.parse({"version": 2, "name": page["name"], "script": sequence_script(page["name"], layout)})
+            if "name" in layout:
+                raise ValueError("Unexpected name inside feature layout.")
+            page = {"name": page["name"], **layout}
         schema = COLLECTION_SCHEMA if self.collection_key is not None else PAGE_SCHEMA
         if not isinstance(page, dict) or set(page) != set(schema["required"]):
             raise ValueError("Incomplete generated page.")

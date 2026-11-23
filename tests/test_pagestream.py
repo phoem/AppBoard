@@ -4,6 +4,7 @@ import unittest
 from appboard.pagestream import PageStream
 from appboard.collectionview import is_collection_request
 from appboard.native import Drawing
+from appboard.sequence import sequence_candidate, sequence_schema, sequence_script
 from appboard.project import DrawingProject, PagedProject, Project
 from dataclasses import asdict
 
@@ -14,6 +15,62 @@ def event(text):
 
 
 class PageStreamTests(unittest.TestCase):
+    def test_ordered_edits_stream_to_portable_source_and_keep_duplicates(self):
+        spec = dict(key="takes", separator=" / ", append=[
+            {"label": 'Cue "A}"', "value": "A"}, {"label": "Cue B", "value": "B"}],
+            remove_last="Rewind", remove_first="Play", clear="Start over")
+        previews = []
+        stream = PageStream(previews.append, allow_sequence=True)
+        # A provider may reorder fields, split an escape or deliver one byte at a time.
+        prefix = '{"layout":' + json.dumps(spec) + ',"name":"Practice"'
+        for char in prefix:
+            stream.feed(event(char))
+        self.assertEqual(len(previews), 1)
+        stream.feed(event('}') + b"data: [DONE]\n\n")
+        saved = Project.parse(asdict(stream.finish()))
+        self.assertEqual(saved.script, previews[0])
+        drawing = Drawing(saved.script)
+        frame = drawing.frame(400, 270, data={"elsewhere": "preserved"})
+        for label, expected in [('Play', []), ('Cue "A}"', ["A"]), ("Cue B", ["A", "B"]),
+                                ('Cue "A}"', ["A", "B", "A"]), ("Rewind", ["A", "B"]),
+                                ("Play", ["B"]), ("Start over", [])]:
+            button = next(n for n in frame["nodes"] if n.get("value") == label)
+            frame = drawing.frame(400, 270, {"type": "down", "x": button["x"], "y": button["y"]}, data=frame["data"])
+            self.assertEqual(frame["data"], {"elsewhere": "preserved", "takes": expected})
+            self.assertEqual(frame["nodes"][-1]["value"], " / ".join(expected))
+        conflict = drawing.frame(400, 270, data={"takes": 12})
+        self.assertEqual(conflict["data"], {"takes": 12})
+
+    def test_ordered_edits_keep_custom_code_available(self):
+        context = {"fromPage": "Home", "request": "Add samples to a list and drag to rearrange them"}
+        self.assertTrue(sequence_candidate(context))
+        self.assertFalse(sequence_candidate({**context, "currentPage": {}}))
+        stream = PageStream(lambda _: None, allow_sequence=True, shared_scope=True)
+        page = dict(name="Plot", layout=dict(sections=["const offset=12;", "g.circle(offset,10,4,'red');"],
+                    input="function(e) { g.data.last = e.type; };", browser=False, toolbarHeight=80))
+        stream.feed(event(json.dumps(page)) + b"data: [DONE]\n\n")
+        result = Drawing(stream.finish().script).frame(200, 80, {"type": "down"})
+        self.assertEqual(result["nodes"][0]["color"], "red")
+        self.assertEqual(result["data"], {"last": "down"})
+
+    def test_malformed_sequence_descriptions_are_rejected(self):
+        valid = dict(key="samples", separator=", ", append=[], remove_last="Undo", remove_first="", clear="")
+        for bad in ({"key": "__proto__"}, {"append": [{"label": "A", "value": []}]},
+                    {"remove_last": ""}, {"clear": True}, {"unknown": 1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                sequence_script("List", {**valid, **bad})
+
+    def test_explicit_delimiters_preserve_whitespace_and_freeform_schema(self):
+        for brief, expected in [("Show entries separated by ' | '.", " | "),
+                                ('Display them joined with "".', "")]:
+            with self.subTest(brief=brief):
+                self.assertEqual(sequence_schema(brief)["properties"]["separator"]["enum"], [expected])
+        self.assertNotIn("enum", sequence_schema("Use a suitable separator")["properties"]["separator"])
+        fields = sequence_schema("Serve removes the first entry. Take back removes only the last note. "
+                                 "'Flush' clears the list.")["properties"]
+        for op, label in [("remove_first", "Serve"), ("remove_last", "Take back"), ("clear", "Flush")]:
+            self.assertEqual(fields[op]["enum"], [label])
+
     def test_only_plain_new_collection_briefs_use_the_collection_format(self):
         feature = {"fromPage": "Home", "request": "Browse collection: inventory from g.data.stock"}
         self.assertTrue(is_collection_request(feature))
