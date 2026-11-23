@@ -8,7 +8,8 @@ from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from .project import MAX_BYTES, Project
-from .pagestream import PAGE_SCHEMA, PageStream
+from .collectionview import is_collection_request
+from .pagestream import COLLECTION_SCHEMA, PAGE_SCHEMA, PageStream
 
 SCHEMA = json.loads((Path(__file__).with_name("assets") / "generation.schema.json").read_text(encoding="utf-8"))
 DRAWING_SCHEMA = {**SCHEMA, "properties": {
@@ -48,6 +49,22 @@ Use AppBoard.browser.navigate(url), back(), forward(), reload(), and subscribe(f
 Subscribers receive {url,title,canGoBack,canGoForward,loading}. HTML cannot access the page DOM.
 For all other apps use browser:false. Fit the available panel, use accessible controls and support resizing.
 When revising an existing app preserve behavior and styling outside the requested changes."""
+
+HOME_EXAMPLE = """Build the main page. For a deferred feature, give its button a brief describing
+what the user can see and do there, including the shared data it should use. Prefix the brief with
+"Browse collection:" only for a plain read-only list or thumbnail grid. Use a normal brief for custom features.
+{"name":"Atlas","sections":["g.clear('white'); g.text(16,12,'Atlas',22);","g.featureButton(16,52,140,40,'Places','places','Browse collection: recorded places from g.data.places','teal');"],"browser":false,"toolbarHeight":80,"input":""}"""
+
+COLLECTION_INSTRUCTIONS = """Describe the requested collection view as five JSON strings.
+name is its visible heading. collection is the g.data array key from the brief or collectionKeys.
+labelField names an item's title field. For a gallery set imageField to the thumbnail PNG field,
+or use "" for text lists. emptyText is a short message when the collection is empty.
+Example: {"name":"Roster","collection":"members","labelField":"name","imageField":"","emptyText":"No members yet."}
+Use the requested names. The host handles layout, scrolling and native rendering."""
+
+FEATURE_EXAMPLE = """Draw the requested destination itself. Use executable JS sections that share one
+draw(g,w,h) body and implement the requested input(e,g,w,h) behavior. Use w and h for dimensions.
+{"name":"Switch","sections":["g.clear('white');","g.text(16,12,g.data.on?'On':'Off',22);"],"browser":false,"toolbarHeight":80,"input":"if(e.type==='down')g.data.on=!g.data.on;"}"""
 
 
 def parse_response(raw):
@@ -130,27 +147,38 @@ class Generator(QObject):
 
     def generate_page(self, context):
         self.cancel()
+        feature = context.get("pageKind") == "feature" or context.get("page", "main") != "main"
+        collection = feature and is_collection_request(context)
+        collection_key = None
         instructions = """Write one working native page for the user's request. Output its name and drawing sections first.
-Example of the exact JSON shape and runnable JavaScript:
-{"name":"Atlas","sections":["g.clear('white'); g.text(16,12,'Atlas',22);","g.featureButton(16,52,140,40,'Places','places','List places','teal');"],"browser":false,"toolbarHeight":80,"input":""}
-Choose the name, heading, controls and content from the request. Put a short heading in the first section
-and the first useful control in the next. Every sections entry contains executable JS statements.
+Choose the name, heading and contents from the request. In drawing arrays each entry contains JS statements.
 Keep sections short and terminate drawing calls with semicolons.
-Each string runs as statements inside draw(g,w,h) in its own block.
 g IS the drawing API. Call its methods directly. g.ctx, fillStyle, canvas, DOM and function wrappers do not work.
-Use g.featureButton(x,y,width,height,label,id,brief,color) for navigation. It draws and handles clicks.
+Use g.featureButton only for navigation to a distinct subpage. After x,y,width,height supply
+exactly four strings in order: visible label, ONE stable ID, descriptive brief, Qt color. It handles clicks.
 Feature IDs start with a lowercase letter and use lowercase letters, digits, hyphens or underscores.
 When feature buttons handle all interactions, return input as an empty string.
 Implement only the requested page. Back is supplied. For other controls, input is the body of input(e,g,w,h).
 Keep shared state in g.data. Show an empty state for empty collections. Add sample records only if requested.
 Use concise code. Available primitives:
 """
-        body = {"model": self.model, "temperature": 0.2, "messages": [{"role": "system", "content": instructions + DRAWING_API},
+        if collection:
+            keys = context.get("collectionKeys", [])
+            collection_key = keys[0] if len(keys) == 1 else context["page"]
+            system_prompt = COLLECTION_INSTRUCTIONS
+        elif feature:
+            system_prompt = (FEATURE_EXAMPLE + "\nReturn the feature name and sections first. Available API:\n" + DRAWING_API +
+                             "\ng.data is shared JSON state. g.featureButton(x,y,w,h,label,id,brief,color) draws "
+                             "and handles navigation to a different feature. The host supplies Back.")
+        else:
+            system_prompt = HOME_EXAMPLE + "\nEach section runs in its own block inside draw(g,w,h).\n" + instructions + DRAWING_API
+        body = {"model": self.model, "temperature": 0.2, "messages": [{"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(context)}], "stream": True,
                 "response_format": {"type": "json_schema", "json_schema": {
-                    "name": "appboard_page", "strict": True, "schema": PAGE_SCHEMA}}}
+                    "name": "appboard_page", "strict": True, "schema": COLLECTION_SCHEMA if collection else PAGE_SCHEMA}}}
         def submit(fast=False):
-            stream = PageStream(self.preview.emit, self.pageTitle.emit, self.partialPreview.emit)
+            stream = PageStream(self.preview.emit, self.pageTitle.emit, self.partialPreview.emit,
+                                shared_scope=feature, collection_key=collection_key)
             payload = {**body, "reasoning_effort": "none"} if fast else body
 
             def rejected(status, message):

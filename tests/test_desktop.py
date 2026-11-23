@@ -517,6 +517,75 @@ class DesktopTests(unittest.TestCase):
         self.assertNotIn("clicked", session.surface.data)
         self.assertFalse(session.building)
         self.assertIn("gallery", self.board.library.load(session.version.app_id)[0].features)
+        self.assertIn("gallery, completed page", session.lastCorrection)
+
+    def test_collection_feature_binds_existing_data_and_reopens_without_generation(self):
+        session = self.board.mount(PagedProject("Field notebook"))
+        session.surface.data = {"photos": ["Hillside"], "owner": "private"}
+        flow = session.pages
+        flow.client.base, flow.client.model = "http://localhost:9876/v1", "fixture"
+        with patch.object(flow.client, "_request") as post:
+            flow.open("gallery", "View Gallery")
+            _, body, finish = post.call_args.args
+            context = json.loads(body["messages"][1]["content"])
+            self.assertEqual(context["collectionKeys"], ["photos"])
+            self.assertNotIn("Hillside", body["messages"][1]["content"])
+            schema = body["response_format"]["json_schema"]["schema"]
+            self.assertEqual(set(schema["required"]), {"name", "collection", "imageField", "labelField", "emptyText"})
+            view = dict(name="Gallery", collection="", imageField="", labelField="", emptyText="")
+            event = {"choices": [{"delta": {"content": json.dumps(view)}}]}
+            post.call_args.kwargs["stream"].feed(("data: " + json.dumps(event) + "\n\ndata: [DONE]\n\n").encode())
+            finish(b"")
+            self.assertEqual(post.call_count, 1)
+        self.assertEqual(session.surface.nodes[-1]["value"], "Hillside")
+        app_id = session.version.app_id
+        session.close()
+        reopened = self.board.open_record(app_id)
+        with patch.object(reopened.pages.client, "_request") as post:
+            reopened.pages.open("gallery", "View Gallery")
+            post.assert_not_called()
+        self.assertEqual(reopened.surface.nodes[-1]["value"], "No items yet.")
+
+    def test_gallery_stream_reuses_layout_locals_and_waits_for_closing_brace(self):
+        session = self.board.mount(PagedProject("Field notebook"))
+        flow = session.pages
+        flow.client.base, flow.client.model = "http://localhost:9876/v1", "fixture"
+        session.surface.data = {"photos": ["Hillside", "Shoreline"]}
+        sections = [
+            "g.clear('white'); g.text(16,12,'Gallery',22);",
+            "const photos = g.data.photos || []; const padding = 16;",
+            "if (!photos.length) {",
+            "g.text(padding,52,'No photos yet');",
+            "} else {",
+            "photos.forEach((name,i)=>g.text(padding,52+i*24,name));",
+            "}",
+        ]
+        with patch.object(flow.client, "_request") as post:
+            flow.open("gallery", "Draw a custom Gallery with captions and a selection control")
+            _, body, finish = post.call_args.args
+            self.assertEqual(json.loads(body["messages"][1]["content"])["sharedDataKeys"], ["photos"])
+            stream = post.call_args.kwargs["stream"]
+            def feed(fragment):
+                message = {"choices": [{"delta": {"content": fragment}}]}
+                stream.feed(("data: " + json.dumps(message) + "\n\n").encode())
+            feed('{"name":"Gallery","sections":[')
+            for index, section in enumerate(sections):
+                feed(("," if index else "") + json.dumps(section))
+                self.assertEqual(post.call_count, 1)
+                self.assertTrue(session.building)
+                self.assertEqual(session.project.features, {})
+                self.assertIn("Gallery", [n.get("value") for n in session.surface.nodes])
+            feed('],"browser":false,"toolbarHeight":80,"input":""}')
+            stream.feed(b"data: [DONE]\n\n")
+            finish(b"")
+        self.assertEqual(flow.key, "gallery")
+        self.assertFalse(session.lastCorrection)
+        self.assertEqual([n["value"] for n in session.surface.nodes if n["kind"] == "text"],
+                         ["Gallery", "Hillside", "Shoreline"])
+        self.assertEqual(self.board.library.load(session.version.app_id)[0], session.project)
+        session.surface.data.clear()
+        session.surface.redraw()
+        self.assertEqual(session.surface.nodes[-1]["value"], "No photos yet")
 
     def test_cancel_failed_feature_and_retry_preserve_committed_page(self):
         path = Path(self.temp.name) / "existing.appboard"

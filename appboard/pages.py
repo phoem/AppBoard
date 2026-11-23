@@ -33,6 +33,7 @@ class Pages(QObject):
         self.retry_job = None
         self.previous = None
         self.message = ""
+        self.last_correction = ""
         self.home_ready = True
         self.preview_heading = ""
         self.context = None
@@ -83,6 +84,7 @@ class Pages(QObject):
                 return
             self.client.base, self.client.model = provider
         self.job = (key, request, revision, draft)
+        self.last_correction = ""
         self.retry_job = None
         self.previous = self.surface.drawing
         self.surface.stop()
@@ -92,6 +94,8 @@ class Pages(QObject):
         self.message = f"Waiting for {self.client.model}…"
         root = self.root
         context = {"page": key or "main", "request": request, "viewport": list(self.surface.size)}
+        if key:
+            context["pageKind"] = "feature"
         if root.brief and root.brief != request and (revision or not key):
             context["app"] = root.brief
         if root.features:
@@ -105,8 +109,10 @@ class Pages(QObject):
             context["appName"] = root.name
             context["palette"] = list(dict.fromkeys(n["color"] for n in self.surface.nodes if "color" in n))[:8]
         # Runtime values stay local. The model can reuse the shape of shared state.
-        if self.surface.data:
+        if self.surface.data or key:
             context["sharedDataKeys"] = list(self.surface.data)
+        if key and self.surface.data:
+            context["collectionKeys"] = [name for name, value in self.surface.data.items() if isinstance(value, list)]
         self.context = context
         self.update()
         self.client.generate_page(context)
@@ -124,8 +130,11 @@ class Pages(QObject):
         try:
             frame = Drawing(script).frame(*self.surface.size, browser=self.session.port.state, data=self.surface.data)
         except DRAW_ERRORS as exc:
-            if not provisional:
-                self.correct(script, exc)
+            if provisional or (self.job[0] and isinstance(exc, quickjs.JSException) and
+                               str(exc).startswith(("SyntaxError:", "ReferenceError:"))):
+                # A feature prefix may end inside a loop or before a helper declaration.
+                return
+            self.correct(script, exc, "drawing section")
             return
         if not frame["nodes"]:
             return
@@ -140,11 +149,13 @@ class Pages(QObject):
         self.surface.nodes = frame["nodes"]
         self.surface.frameChanged.emit()
 
-    def correct(self, source, exc):
+    def correct(self, source, exc, stage):
         if "correction" in self.context:
             self.client.cancel()
             self.fail(str(exc))
             return
+        reason = str(exc).partition("\n")[0][:240]
+        self.last_correction = f"Last correction ({self.job[0] or 'main'}, {stage}): {reason}"
         self.context = {**self.context, "correction": {"error": str(exc)[:1000], "source": source}}
         self.message = "Correcting the generated drawing…"
         self.update()
@@ -187,7 +198,7 @@ class Pages(QObject):
             self.validate_page(page)
             self.install(key, page)
         except DRAW_ERRORS as exc:
-            self.correct(page.script, exc)
+            self.correct(page.script, exc, "completed page")
             return
         if key != self.key and not revision:
             self.history.append((self.key, self.previous))

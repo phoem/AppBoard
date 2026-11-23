@@ -48,10 +48,15 @@ Rectangle {
             anchors.fill: parent
             anchors.leftMargin: 12; anchors.rightMargin: 5; spacing: 5
             Label {
+                id: panelTitle
                 Layout.fillWidth: true
                 text: panel.session.storageStatus || panel.session.pageStatus || panel.session.title
-                ToolTip.visible: labelHover.hovered && truncated
-                ToolTip.text: text
+                ToolTip {
+                    id: correctionTip
+                    visible: labelHover.hovered && (panelTitle.truncated || panel.session.lastCorrection.length > 0)
+                    text: panelTitle.text + (panel.session.lastCorrection ? "\n" + panel.session.lastCorrection : "")
+                    contentItem: Text { text: correctionTip.text; textFormat: Text.PlainText; color: correctionTip.palette.toolTipText }
+                }
                 HoverHandler { id: labelHover }
                 textFormat: Text.PlainText
                 elide: Text.ElideRight

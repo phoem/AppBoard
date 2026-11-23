@@ -76,6 +76,7 @@ class Session(QObject):
     canBack = Property(bool, lambda self: bool(self.pages and self.pages.history), notify=changed)
     canRetry = Property(bool, lambda self: bool(self.pages and self.pages.retry_job), notify=changed)
     pageStatus = Property(str, lambda self: self.pages.message if self.pages else "", notify=changed)
+    lastCorrection = Property(str, lambda self: self.pages.last_correction if self.pages else "", notify=changed)
     previewHeading = Property(str, lambda self: self.pages.preview_heading if self.pages else "", notify=changed)
     canSave = Property(bool, lambda self: not self.pages or self.pages.home_ready, notify=changed)
     source = Property(str, lambda self: self._html, notify=reloadSource)
