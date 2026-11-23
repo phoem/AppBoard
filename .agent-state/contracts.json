@@ -20,7 +20,7 @@
     {
       "contract_id": "appboard-project-v3",
       "name": "Progressive native projects and saved feature pages",
-      "paths": ["appboard/project.py", "appboard/pagestream.py", "appboard/pages.py", "appboard/assets/drawing.js"],
+      "paths": ["appboard/project.py", "appboard/pagestream.py", "appboard/pages.py", "appboard/assets/drawing.js", "appboard/collectionview.py", "appboard/assets/collection.js"],
       "classification": "frozen-contract",
       "status": "active",
       "owner": "orchestrator",
